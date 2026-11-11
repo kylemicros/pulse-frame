@@ -138,13 +138,17 @@ def check_rows_match(
         )
 
 
-def check_sample(timestamp_ms: float, rgb: tuple[float, ...]) -> None:
+def check_timestamp(timestamp_ms: float) -> None:
     if not math.isfinite(timestamp_ms):
         raise SignalError(
             "BAD_TIMESTAMPS",
             f"The timestamp {timestamp_ms} is not a finite number.",
             "Pass a finite timestamp in milliseconds.",
         )
+
+
+def check_sample(timestamp_ms: float, rgb: tuple[float, ...]) -> None:
+    check_timestamp(timestamp_ms)
     if len(rgb) != RGB_CHANNELS or not all(math.isfinite(c) for c in rgb):
         raise SignalError(
             "BAD_VALUES",
