@@ -2,7 +2,7 @@ from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, freqz_sos, sosfiltfilt
 
 from pulse_frame.signal.checks import check_band, check_sample_rate, check_signal
 
@@ -35,3 +35,14 @@ def bandpass_sections(
     return butter(
         BUTTERWORTH_ORDER, [low_hz, high_hz], btype="bandpass", fs=fs_hz, output="sos"
     )
+
+
+def zero_phase_cross_gain(
+    freqs: NDArray[np.float64],
+    fs_hz: float,
+    low_hz: float = PASS_LOW_HZ,
+    high_hz: float = PASS_HIGH_HZ,
+) -> NDArray[np.float64]:
+    sos = bandpass_sections(fs_hz, low_hz, high_hz)
+    _, response = freqz_sos(sos, worN=np.asarray(freqs, dtype=np.float64), fs=fs_hz)
+    return np.abs(response) ** 4

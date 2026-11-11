@@ -50,33 +50,27 @@ def check_tracker_sample_rate(fs_hz: float, low_hz: float, high_hz: float) -> No
     if not fs_hz > lowest_hz:
         raise SignalError(
             "BAD_SAMPLE_RATE",
-            f"fs_hz ({fs_hz} Hz) must be above {lowest_hz} Hz so the {low_hz} to"
+            f"fs_hz ({fs_hz} Hz) must be above {lowest_hz:g} Hz so the {low_hz} to"
             f" {high_hz} Hz band-pass fits below fs/2.",
             f"Pass an fs_hz above {lowest_hz:g} Hz, for example 30.",
         )
 
 
-def check_tracker_windows(
-    window_s: float,
-    min_seconds: float,
-    shortest_s: float,
-    floor_s: float,
-    threshold_db: float,
-) -> None:
+def check_tracker_windows(window_s: float, min_seconds: float, floor_s: float) -> None:
     if not floor_s <= window_s < math.inf:
         raise SignalError(
             "BAD_WINDOW",
             f"window_s ({window_s} s) must be a finite number of seconds of at least"
-            f" {floor_s} s; the {threshold_db} dB quality threshold was measured"
-            f" for {floor_s:g} s windows.",
+            f" {floor_s:g} s; the rate gates compare two {floor_s / 2.0:g} s halves"
+            f" and were measured on {floor_s:g} s windows.",
             f"Pass window_s of at least {floor_s:g} s, for example {floor_s:g}.",
         )
-    if not shortest_s <= min_seconds <= window_s:
+    if min_seconds != window_s:
         raise SignalError(
             "BAD_WINDOW",
-            f"min_seconds ({min_seconds} s) must be between the POS window"
-            f" ({shortest_s} s) and window_s ({window_s} s).",
-            f"Pass a finite min_seconds with {shortest_s} <= min_seconds <= window_s.",
+            f"min_seconds ({min_seconds:g} s) must equal window_s ({window_s:g} s) so"
+            " the rate gates only ever run on a full window.",
+            "Pass min_seconds equal to window_s, or leave both at their defaults.",
         )
 
 
@@ -147,11 +141,25 @@ def check_timestamp(timestamp_ms: float) -> None:
         )
 
 
-def check_sample(timestamp_ms: float, rgb: tuple[float, ...]) -> None:
-    check_timestamp(timestamp_ms)
+def check_region_colour(region: str, rgb: tuple[float, ...]) -> None:
     if len(rgb) != RGB_CHANNELS or not all(math.isfinite(c) for c in rgb):
         raise SignalError(
             "BAD_VALUES",
-            "The colour sample must hold three finite channel means.",
-            "Pass (red, green, blue) means as finite numbers.",
+            f"The {region} colour sample must hold three finite channel means.",
+            f"Pass the {region} (red, green, blue) means as finite numbers.",
+        )
+
+
+def check_region_pulses(pulses: NDArray[np.float64]) -> None:
+    if pulses.ndim != 2:
+        raise SignalError(
+            "BAD_VALUES",
+            f"Region pulses must have shape (regions, n), got {pulses.shape}.",
+            "Pass one row of pulse values per face region.",
+        )
+    if not np.all(np.isfinite(pulses)):
+        raise SignalError(
+            "BAD_VALUES",
+            "Some region pulse values are not finite numbers.",
+            "Pass finite pulse values.",
         )

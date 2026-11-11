@@ -8,7 +8,7 @@ from tests.frames import SEED, TRUE_BPM
 from tests.signal.synthetic import webcam_recording
 from tests.signal.tracking import assert_ok_within_one_bpm, feed
 
-SETTLE_S = 10.0
+SETTLE_S = 20.0
 
 
 def assert_acquiring(reading: Reading) -> None:
@@ -18,7 +18,7 @@ def assert_acquiring(reading: Reading) -> None:
 
 
 def ok_tracker() -> tuple[PulseTracker, float]:
-    recording = webcam_recording(TRUE_BPM, seed=SEED, duration_s=15.0)
+    recording = webcam_recording(TRUE_BPM, seed=SEED, duration_s=22.0)
     tracker = PulseTracker()
     feed(tracker, recording)
     assert_ok_within_one_bpm(tracker.reading(), TRUE_BPM)
@@ -55,7 +55,7 @@ def test_tick_on_an_empty_tracker_stays_acquiring() -> None:
 def test_tracker_settles_again_on_fresh_samples_after_a_tick_restart() -> None:
     tracker, newest_ms = ok_tracker()
     tracker.tick(newest_ms + MAX_GAP_MS + 1.0)
-    resumed = webcam_recording(TRUE_BPM, seed=SEED + 1, duration_s=15.0)
+    resumed = webcam_recording(TRUE_BPM, seed=SEED + 1, duration_s=22.0)
     resumed = resumed.shifted(newest_ms + 2.0 * MAX_GAP_MS - resumed.timestamps_ms[0])
 
     feed(tracker, resumed.until(SETTLE_S - 0.5))

@@ -11,15 +11,15 @@ from tests.signal.synthetic import (
 from tests.signal.tracking import assert_ok_within_one_bpm
 
 TRUE_RATES_BPM = [60.0, 72.0, 120.0]
-WINDOW_S = 10.0
+WINDOW_S = 20.0
 UPDATE_S = 1.0
-FIRST_MOTION_S = 15.0
-SECOND_MOTION_S = 20.0
-MID_UPDATE_MOTION_S = 15.5
+FIRST_MOTION_S = 25.0
+SECOND_MOTION_S = 30.0
+MID_UPDATE_MOTION_S = 25.5
 FIRST_UPDATE_AFTER_S = UPDATE_S + 0.1
 LEAVES_WINDOW_MARGIN_S = 0.1
 RECOVERY_SLACK_S = 2.0
-SETTLE_S = 10.0
+SETTLE_S = 20.0
 SETTLE_MOTION_S = 5.0
 RATE_BEFORE_BPM = 60.0
 RATE_AFTER_BPM = 90.0
@@ -32,13 +32,13 @@ def trace_with_motion(
     pending = sorted(motion_at_s)
     flagged_at: list[float] = []
     trace = []
-    for timestamp_ms, rgb in recording.samples():
+    for timestamp_ms, regions in recording.samples():
         elapsed_s = (timestamp_ms - start_ms) / 1000.0
         moving = bool(pending) and elapsed_s > pending[0]
         if moving:
             pending.pop(0)
             flagged_at.append(elapsed_s)
-        tracker.add(timestamp_ms, rgb, moving=moving)
+        tracker.add(timestamp_ms, regions, moving=moving)
         trace.append((elapsed_s, tracker.reading()))
     return trace, flagged_at
 
@@ -55,13 +55,13 @@ def last_reading_before(trace: list[tuple[float, Reading]], at_s: float) -> Read
 
 @pytest.mark.parametrize("true_bpm", TRUE_RATES_BPM)
 def test_samples_marked_still_keep_a_clean_pulse_ok(true_bpm: float) -> None:
-    recording = webcam_recording(true_bpm, seed=SEED + int(true_bpm), duration_s=20.0)
+    recording = webcam_recording(true_bpm, seed=SEED + int(true_bpm), duration_s=25.0)
     tracker = PulseTracker()
 
     trace, flagged_at = trace_with_motion(tracker, recording, [])
 
     assert flagged_at == []
-    assert_ok_within_one_bpm(last_reading_before(trace, 15.0), true_bpm)
+    assert_ok_within_one_bpm(last_reading_before(trace, 22.0), true_bpm)
     assert_ok_within_one_bpm(trace[-1][1], true_bpm)
 
 
@@ -69,7 +69,7 @@ def test_samples_marked_still_keep_a_clean_pulse_ok(true_bpm: float) -> None:
 def test_one_motion_sample_makes_ok_low_quality_until_it_leaves_the_window(
     true_bpm: float,
 ) -> None:
-    recording = webcam_recording(true_bpm, seed=SEED + int(true_bpm), duration_s=32.0)
+    recording = webcam_recording(true_bpm, seed=SEED + int(true_bpm), duration_s=50.0)
     tracker = PulseTracker()
 
     trace, flagged_at = trace_with_motion(tracker, recording, [FIRST_MOTION_S])
@@ -94,7 +94,7 @@ def test_one_motion_sample_makes_ok_low_quality_until_it_leaves_the_window(
 
 def test_latest_motion_in_the_window_keeps_the_reading_low_quality() -> None:
     true_bpm = 72.0
-    recording = webcam_recording(true_bpm, seed=SEED + 7, duration_s=34.0)
+    recording = webcam_recording(true_bpm, seed=SEED + 7, duration_s=54.0)
     tracker = PulseTracker()
 
     trace, flagged_at = trace_with_motion(
@@ -120,7 +120,7 @@ def test_latest_motion_in_the_window_keeps_the_reading_low_quality() -> None:
 
 def test_motion_during_the_settle_time_reads_acquiring_then_low_quality() -> None:
     true_bpm = 72.0
-    recording = webcam_recording(true_bpm, seed=SEED + 11, duration_s=20.0)
+    recording = webcam_recording(true_bpm, seed=SEED + 11, duration_s=30.0)
     tracker = PulseTracker()
 
     trace, flagged_at = trace_with_motion(tracker, recording, [SETTLE_MOTION_S])
@@ -151,7 +151,7 @@ def test_first_ok_after_motion_reflects_only_the_rate_after_the_motion() -> None
             seconds, [(0.0, RATE_BEFORE_BPM), (FIRST_MOTION_S, RATE_AFTER_BPM)]
         ),
         seed=SEED + 12,
-        duration_s=30.0,
+        duration_s=50.0,
     )
     tracker = PulseTracker()
 
@@ -172,7 +172,7 @@ def test_first_ok_after_motion_reflects_only_the_rate_after_the_motion() -> None
 def test_motion_sample_turns_an_ok_reading_low_quality_on_the_same_call(
     true_bpm: float,
 ) -> None:
-    recording = webcam_recording(true_bpm, seed=SEED + int(true_bpm), duration_s=17.0)
+    recording = webcam_recording(true_bpm, seed=SEED + int(true_bpm), duration_s=27.0)
     tracker = PulseTracker()
 
     trace, flagged_at = trace_with_motion(tracker, recording, [MID_UPDATE_MOTION_S])
