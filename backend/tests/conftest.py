@@ -5,9 +5,15 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from pulse_frame.platform.sandbox import apply_loopback_sandbox
 from pulse_frame.vision.model import ensure_model
 
+SESSION_SANDBOX = apply_loopback_sandbox()
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def pytest_report_header() -> str:
+    return f"network sandbox: {SESSION_SANDBOX.code} ({SESSION_SANDBOX.reason})"
 
 
 def load_rgb(path: Path) -> NDArray[np.uint8]:
