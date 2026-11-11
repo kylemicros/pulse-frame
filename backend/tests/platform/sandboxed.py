@@ -10,7 +10,8 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
@@ -87,6 +88,22 @@ def apply_sandbox() -> Record | None:
     return as_record(sandbox.apply_loopback_sandbox())
 
 
+@contextmanager
+def faked_platform(name: str) -> Iterator[None]:
+    importlib.import_module(SANDBOX_MODULE)
+    real = sys.platform
+    sys.platform = name
+    try:
+        yield
+    finally:
+        sys.platform = real
+
+
+def apply_sandbox_on(name: str) -> Record | None:
+    with faked_platform(name):
+        return apply_sandbox()
+
+
 LIBRARY_CALLS: list[str] = []
 FREED_TEXTS: list[str] = []
 
@@ -155,7 +172,6 @@ class FakeLibSystem:
 
 def break_libsystem(mode: str) -> None:
     FakeLibSystem.breakage = BROKEN_LIBRARIES[mode]
-    sys.platform = "darwin"
     ctypes.CDLL = FakeLibSystem
 
 
@@ -322,24 +338,22 @@ def scenario_apply(path: Path) -> None:
 
 
 def scenario_linux(path: Path) -> None:
-    sys.platform = "linux"
-    write(path, {"returned": apply_sandbox(), "status": current_status()})
+    write(path, {"returned": apply_sandbox_on("linux"), "status": current_status()})
 
 
 def scenario_broken_library(path: Path, mode: str) -> None:
     break_libsystem(mode)
     record: Record = {"library_calls": LIBRARY_CALLS, "freed_texts": FREED_TEXTS}
     record_uncaught(path, record)
-    apply_sandbox()
+    apply_sandbox_on("darwin")
     record["status_after"] = current_status()
     write(path, record)
 
 
 def scenario_log_records(path: Path, platform: str) -> None:
     records = catch_every_log_record()
-    if platform == "linux":
-        sys.platform = "linux"
-    write(path, {"status": apply_sandbox(), "records": records})
+    status = apply_sandbox_on("linux") if platform == "linux" else apply_sandbox()
+    write(path, {"status": status, "records": records})
 
 
 def scenario_mach_lookup(path: Path) -> None:
@@ -421,10 +435,7 @@ def scenario_live_check(path: Path) -> None:
 
 def scenario_live_check_unsupported(path: Path) -> None:
     record = live_check_record(path)
-    platform = sys.platform
-    sys.platform = "linux"
-    record["unsupported"] = apply_sandbox()
-    sys.platform = platform
+    record["unsupported"] = apply_sandbox_on("linux")
     run_live_check_on_the_astronaut(record)
 
 
@@ -461,10 +472,7 @@ def scenario_live_check_camera_fails(path: Path, failure: str) -> None:
     record: Record = {"camera_opened": [], "reads": 0, "released": 0}
     sandbox = importlib.import_module(SANDBOX_MODULE)
     record["underneath"] = as_record(sandbox.enter_sandbox())
-    platform = sys.platform
-    sys.platform = "linux"
-    record["unsupported"] = apply_sandbox()
-    sys.platform = platform
+    record["unsupported"] = apply_sandbox_on("linux")
     clock = SteppingClock()
     camera = FailingCamera(record, clock, CAMERA_FAILURES[failure])
     opened = record["camera_opened"]
@@ -487,11 +495,13 @@ def scenario_live_check_broken(path: Path, mode: str) -> None:
         record["mediapipe_imports"] = 1
         raise ImportError("mediapipe was imported after the sandbox failed")
 
-    break_libsystem(mode)
     watch_import("mediapipe", refuse_mediapipe)
+    live_check = importlib.import_module(LIVE_CHECK_MODULE)
+    break_libsystem(mode)
     write_at_exit(path, record)
     sys.argv = ["live_check", "--seconds", LIVE_CHECK_SECONDS]
-    importlib.import_module(LIVE_CHECK_MODULE).main()
+    with faked_platform("darwin"):
+        live_check.main()
 
 
 def scenario_model_main(path: Path) -> None:
