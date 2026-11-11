@@ -5,8 +5,24 @@ from scipy.spatial import ConvexHull, QhullError
 
 from pulse_frame.vision.landmarks import FaceLandmarks
 
-FOREHEAD: tuple[int, ...] = (104, 69, 108, 151, 337, 299, 333)
-RIGHT_CHEEK: tuple[int, ...] = (
+type RegionPoint = int | tuple[int, int]
+
+FOREHEAD: tuple[RegionPoint, ...] = (
+    104,
+    69,
+    108,
+    151,
+    337,
+    299,
+    333,
+    9,
+    (151, 10),
+    (108, 109),
+    (337, 338),
+    (69, 67),
+    (299, 297),
+)
+RIGHT_CHEEK: tuple[RegionPoint, ...] = (
     116,
     117,
     118,
@@ -25,8 +41,13 @@ RIGHT_CHEEK: tuple[int, ...] = (
     207,
     206,
     203,
+    213,
+    192,
+    214,
+    216,
+    212,
 )
-LEFT_CHEEK: tuple[int, ...] = (
+LEFT_CHEEK: tuple[RegionPoint, ...] = (
     345,
     346,
     347,
@@ -45,6 +66,11 @@ LEFT_CHEEK: tuple[int, ...] = (
     427,
     426,
     423,
+    433,
+    416,
+    434,
+    436,
+    432,
 )
 REGIONS = (FOREHEAD, LEFT_CHEEK, RIGHT_CHEEK)
 REGION_NAMES = ("forehead", "left_cheek", "right_cheek")
@@ -57,19 +83,37 @@ def region_polygons(face: FaceLandmarks) -> list[NDArray[np.float64]]:
 
 def named_region_polygons(face: FaceLandmarks) -> dict[str, NDArray[np.float64]]:
     hulls = {
-        name: region_hull(face, indices)
-        for name, indices in zip(REGION_NAMES, REGIONS, strict=True)
+        name: region_hull(face, outline)
+        for name, outline in zip(REGION_NAMES, REGIONS, strict=True)
     }
     return {name: hull for name, hull in hulls.items() if hull is not None}
 
 
 def region_hull(
-    face: FaceLandmarks, indices: tuple[int, ...]
+    face: FaceLandmarks, outline: tuple[RegionPoint, ...]
 ) -> NDArray[np.float64] | None:
-    chosen = list(indices)
-    if not bool(np.all(face.in_frame[chosen])):
+    if not bool(np.all(face.in_frame[list(outline_landmarks(outline))])):
         return None
-    return hull_polygon(face.points[chosen])
+    return hull_polygon(outline_points(face, outline))
+
+
+def outline_landmarks(outline: tuple[RegionPoint, ...]) -> tuple[int, ...]:
+    return tuple(index for point in outline for index in point_landmarks(point))
+
+
+def point_landmarks(point: RegionPoint) -> tuple[int, ...]:
+    if isinstance(point, int):
+        return (point,)
+    return point
+
+
+def outline_points(
+    face: FaceLandmarks, outline: tuple[RegionPoint, ...]
+) -> NDArray[np.float64]:
+    return np.array(
+        [face.points[list(point_landmarks(point))].mean(axis=0) for point in outline],
+        dtype=np.float64,
+    )
 
 
 def hull_polygon(points: NDArray[np.float64]) -> NDArray[np.float64] | None:

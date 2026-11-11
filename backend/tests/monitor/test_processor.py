@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import pytest
 from numpy.typing import NDArray
+from scipy.spatial import ConvexHull
 
 from pulse_frame.monitor.processor import FrameProcessor, FrameResult
 from pulse_frame.signal.tracker import MAX_GAP_MS, UPDATE_INTERVAL_MS, Reading
@@ -26,10 +27,12 @@ from tests.frames import (
 from tests.signal.synthetic import PULSE_SIGNATURE
 from tests.signal.tracking import assert_ok_within_one_bpm
 from tests.vision.faces import (
+    EXPECTED_OUTLINES,
     crop_above_brows,
     crop_to_a_face_without_usable_regions,
     detect_face,
     face_width_px,
+    outline_points,
 )
 
 FRAME_COUNT = 30
@@ -43,6 +46,7 @@ STILL_BEFORE_CHANGE = int(UPDATE_INTERVAL_MS / 2 / PULSE_STEP_MS)
 FOREHEAD_FLICKER_BPM = 120.0
 FOREHEAD_FLICKER_DEPTH = 0.03
 FLICKER_WITHIN_BPM = 10.0
+VERTEX_TOLERANCE = 1e-9
 
 type Trace = list[tuple[int, FrameResult]]
 type Transform = Callable[[NDArray[np.uint8]], NDArray[np.uint8]]
@@ -513,3 +517,24 @@ def test_still_frames_without_regions_after_a_gate_step_are_not_moving(
     assert len(samples[0].regions) == 3
     assert samples[0].moving is True
     assert all(result.moving is False for result in samples[1:])
+
+
+def test_fixture_regions_are_the_larger_outlines_in_forehead_then_cheeks_order(
+    processor: FrameProcessor, face_model: Path, astronaut_rgb: NDArray[np.uint8]
+) -> None:
+    with FaceTracker(face_model) as tracker:
+        face = detect_face(tracker, astronaut_rgb, 0)
+
+    result = processor.process(astronaut_rgb, 0)
+
+    assert result.face is True
+    assert len(result.regions) == len(EXPECTED_OUTLINES)
+    for region, outline in zip(result.regions, EXPECTED_OUTLINES.values(), strict=True):
+        points = outline_points(face, outline)
+        expected = points[ConvexHull(points).vertices]
+        assert region.shape == expected.shape
+        nearest = np.linalg.norm(region[:, None, :] - expected[None, :, :], axis=2)
+        assert np.all(nearest.min(axis=1) <= VERTEX_TOLERANCE)
+        assert ConvexHull(region).volume == pytest.approx(
+            ConvexHull(expected).volume, rel=1e-9
+        )
