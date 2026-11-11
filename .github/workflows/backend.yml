@@ -34,6 +34,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      - name: Install EGL and GLES libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgles2
+
       - name: Install dependencies
         run: uv sync --locked
 
