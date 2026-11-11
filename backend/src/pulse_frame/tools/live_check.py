@@ -1,17 +1,24 @@
+from __future__ import annotations
+
 import argparse
 import math
 import sys
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from pulse_frame.monitor.processor import FrameProcessor, FrameResult
+from pulse_frame.platform.errors import SandboxError
+from pulse_frame.platform.sandbox import apply_loopback_sandbox
 from pulse_frame.signal.errors import SignalError
 from pulse_frame.vision.errors import VisionError
 from pulse_frame.vision.model import ensure_model
+
+if TYPE_CHECKING:
+    from pulse_frame.monitor.processor import FrameProcessor, FrameResult
 
 LINE_INTERVAL_MS = 1000
 
@@ -67,8 +74,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     try:
+        status = apply_loopback_sandbox()
+        if not status.applied:
+            print(f"{status.code}: {status.reason}", file=sys.stderr)
         run(args.camera, args.seconds)
-    except (VisionError, SignalError) as error:
+    except (SandboxError, VisionError, SignalError) as error:
         print(f"{error.code}: {error.message} {error.action}", file=sys.stderr)
         raise SystemExit(1) from error
     except KeyboardInterrupt:
@@ -76,6 +86,8 @@ def main() -> None:
 
 
 def run(camera_index: int, seconds: float | None) -> None:
+    from pulse_frame.monitor.processor import FrameProcessor
+
     model = ensure_model(download=False)
     camera = open_camera(camera_index)
     try:

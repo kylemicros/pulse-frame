@@ -16,6 +16,7 @@ from pulse_frame.tools import live_check
 from pulse_frame.vision.landmarks import FaceTracker
 from pulse_frame.vision.motion import MOVING_SHARE_OF_FACE_WIDTH
 from tests.frames import SHIFT_SAFETY, shifted_right
+from tests.platform.support import after_sandbox_notice
 from tests.vision.faces import detect_face, face_width_px
 
 CAMERA_FPS = 30.0
@@ -193,6 +194,7 @@ def test_prints_one_status_line_per_second_with_every_field(
     run_tool(monkeypatch, "--seconds", RUN_SECONDS)
 
     output = capsys.readouterr()
+    assert after_sandbox_notice(output.err) == ""
     lines = output.out.splitlines()
     assert len(lines) == 3
     fields = [parse(line) for line in lines]
@@ -227,7 +229,7 @@ def test_camera_that_cannot_open_exits_one_with_camera_unavailable(
 
     output = capsys.readouterr()
     assert exited.value.code == 1
-    assert output.err.startswith("CAMERA_UNAVAILABLE: ")
+    assert after_sandbox_notice(output.err).startswith("CAMERA_UNAVAILABLE: ")
     assert output.out == ""
     assert harness.camera.reads == 0
     assert harness.camera.released == 1
@@ -249,7 +251,7 @@ def test_camera_that_stops_delivering_frames_exits_one_with_camera_read_failed(
 
     output = capsys.readouterr()
     assert exited.value.code == 1
-    assert output.err.startswith("CAMERA_READ_FAILED: ")
+    assert after_sandbox_notice(output.err).startswith("CAMERA_READ_FAILED: ")
     assert harness.camera.reads == FAILING_READ
     assert harness.camera.released == 1
     assert files_under(quiet_folder) == []
@@ -353,7 +355,7 @@ def test_a_repeated_clock_millisecond_is_skipped_and_the_run_goes_on(
     run_tool(monkeypatch, "--seconds", RUN_SECONDS)
 
     output = capsys.readouterr()
-    assert output.err == ""
+    assert after_sandbox_notice(output.err) == ""
     lines = [parse(line) for line in output.out.splitlines()]
     assert [round(float(line["time"])) for line in lines] == [1, 2, 3]
     assert all(line["face"] == "yes" for line in lines)
@@ -377,7 +379,7 @@ def test_ctrl_c_during_a_camera_read_prints_stopped_and_releases_the_camera(
     assert lines[-1] == "Stopped."
     assert len(lines) == 2
     parse(lines[0])
-    assert output.err == ""
+    assert after_sandbox_notice(output.err) == ""
     assert harness.camera.reads == INTERRUPTED_READ
     assert harness.camera.released == 1
     assert files_under(quiet_folder) == []
@@ -394,7 +396,7 @@ def test_camera_stalling_over_two_seconds_prints_one_line_and_keeps_the_schedule
     run_tool(monkeypatch, "--seconds", STALL_RUN_SECONDS)
 
     output = capsys.readouterr()
-    assert output.err == ""
+    assert after_sandbox_notice(output.err) == ""
     times = [float(parse(line)["time"]) for line in output.out.splitlines()]
     assert times == pytest.approx([1.0, 4.0, 5.0], abs=0.1)
     assert harness.camera.released == 1
