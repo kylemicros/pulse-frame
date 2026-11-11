@@ -1,3 +1,5 @@
+import pytest
+
 from pulse_frame.signal.tracker import PulseTracker, Reading
 from tests.signal.synthetic import Recording
 
@@ -25,3 +27,9 @@ def readings_by_second(
         int((elapsed_s + 0.5) // 1.0): reading
         for elapsed_s, reading in reading_trace(tracker, recording)
     }
+
+
+def assert_ok_within_one_bpm(reading: Reading, true_bpm: float) -> None:
+    assert reading.state == "ok"
+    assert reading.bpm is not None
+    assert reading.bpm == pytest.approx(true_bpm, abs=1.0)

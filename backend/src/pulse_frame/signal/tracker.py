@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 from pulse_frame.signal.checks import (
     check_sample,
     check_sample_rate,
+    check_timestamp,
     check_tracker_sample_rate,
     check_tracker_windows,
 )
@@ -37,6 +38,7 @@ class Reading:
 
 
 ACQUIRING = Reading(state="acquiring", bpm=None, quality_db=None)
+MOTION_IN_WINDOW = Reading(state="low_quality", bpm=None, quality_db=None)
 
 
 @dataclass(frozen=True)
@@ -103,9 +105,15 @@ class PulseTracker:
         self._smoother = RateSmoother()
         self._started_ms: float | None = None
         self._next_update_ms: float | None = None
+        self._last_motion_ms: float | None = None
         self._reading = ACQUIRING
 
-    def add(self, timestamp_ms: float, rgb: tuple[float, float, float]) -> None:
+    def add(
+        self,
+        timestamp_ms: float,
+        rgb: tuple[float, float, float],
+        moving: bool = False,
+    ) -> None:
         check_sample(timestamp_ms, rgb)
         if self._times and timestamp_ms <= self._times[-1]:
             return
@@ -113,6 +121,8 @@ class PulseTracker:
             self._restart()
         self._times.append(float(timestamp_ms))
         self._colours.append((float(rgb[0]), float(rgb[1]), float(rgb[2])))
+        if moving:
+            self._mark_motion(float(timestamp_ms))
         self._drop_older_than_window()
         if self._started_ms is None or self._next_update_ms is None:
             self._started_ms = float(timestamp_ms)
@@ -122,6 +132,17 @@ class PulseTracker:
                 (timestamp_ms - self._next_update_ms) / UPDATE_INTERVAL_MS + 1.0
             )
             self._reading = self._estimate(timestamp_ms - self._started_ms)
+
+    def _mark_motion(self, timestamp_ms: float) -> None:
+        self._last_motion_ms = timestamp_ms
+        if self._reading.state == "ok":
+            self._smoother.reset()
+            self._reading = MOTION_IN_WINDOW
+
+    def tick(self, timestamp_ms: float) -> None:
+        check_timestamp(timestamp_ms)
+        if self._times and timestamp_ms - self._times[-1] > MAX_GAP_MS:
+            self._restart()
 
     def reading(self) -> Reading:
         return self._reading
@@ -139,6 +160,7 @@ class PulseTracker:
         self._smoother.reset()
         self._started_ms = None
         self._next_update_ms = None
+        self._last_motion_ms = None
         self._reading = ACQUIRING
 
     def _drop_older_than_window(self) -> None:
@@ -162,8 +184,16 @@ class PulseTracker:
     def _estimate(self, elapsed_ms: float) -> Reading:
         if elapsed_ms < self._settle_ms:
             return ACQUIRING
+        if self._motion_in_window():
+            self._smoother.reset()
+            return MOTION_IN_WINDOW
         processed = self._filtered_pulse()
         if processed is None:
             return ACQUIRING
         estimate = estimate_rate(processed[1], self._fs_hz)
         return self._smoother.update(self._times[-1], estimate)
+
+    def _motion_in_window(self) -> bool:
+        return (
+            self._last_motion_ms is not None and self._last_motion_ms >= self._times[0]
+        )
