@@ -12,30 +12,83 @@ from pulse_frame.vision.regions import (
     FOREHEAD,
     LEFT_CHEEK,
     RIGHT_CHEEK,
+    named_region_polygons,
     region_mask,
     region_polygons,
     skin_mean,
 )
 from tests.vision.faces import (
     EXCLUDED_FEATURES,
+    EXPECTED_OUTLINES,
     EYEBROWS,
     EYES,
     FACE_OVAL,
+    FEATURE_AREAS,
     NOSE_TIP,
+    OutlinePoint,
     crop_above_brows,
     crop_through_both_cheeks_from_below,
     crop_through_left_cheek_from_the_right,
     detect_face,
-    face_width_px,
+    outline_landmarks,
+    outline_points,
 )
 
 REGIONS = {"forehead": FOREHEAD, "left_cheek": LEFT_CHEEK, "right_cheek": RIGHT_CHEEK}
+BASE_OUTLINES: dict[str, tuple[int, ...]] = {
+    "forehead": (104, 69, 108, 151, 337, 299, 333),
+    "left_cheek": (
+        345,
+        346,
+        347,
+        348,
+        329,
+        277,
+        355,
+        371,
+        266,
+        425,
+        411,
+        352,
+        280,
+        330,
+        376,
+        427,
+        426,
+        423,
+    ),
+    "right_cheek": (
+        116,
+        117,
+        118,
+        119,
+        100,
+        47,
+        126,
+        142,
+        36,
+        205,
+        187,
+        123,
+        50,
+        101,
+        147,
+        207,
+        206,
+        203,
+    ),
+}
+AREA_RATIO_OVER_BASE = {
+    "forehead": (8.18, 0.25),
+    "left_cheek": (1.348, 0.008),
+    "right_cheek": (1.348, 0.008),
+}
+PAIR_ONLY_FOREHEAD_LANDMARKS = (10, 109, 338, 67, 297)
 VERTEX_TOLERANCE = 1e-9
-BROW_MARGIN_SHARE_OF_FACE_WIDTH = 0.05
 SKIN = (200, 120, 90)
 BACKGROUND = (0, 0, 255)
 LANDMARK_COUNT = 478
-MIN_MASK_PIXELS = {"forehead": 40, "left_cheek": 133, "right_cheek": 136}
+MIN_MASK_PIXELS = {"forehead": 165, "left_cheek": 183, "right_cheek": 176}
 EDGE_CROPS = {
     "bottom": (crop_through_both_cheeks_from_below, 1, ["forehead"]),
     "right": (crop_through_left_cheek_from_the_right, 0, ["forehead", "right_cheek"]),
@@ -68,26 +121,14 @@ def inside_or_on_edge(polygon: NDArray[np.float64], point: NDArray[np.float64]) 
     )
 
 
-def distance_to_polygon(
-    polygon: NDArray[np.float64], point: NDArray[np.float64]
-) -> float:
-    if inside_or_on_edge(polygon, point):
-        return 0.0
-    starts = polygon
-    edges = np.roll(polygon, -1, axis=0) - starts
-    along = np.clip(
-        np.sum((point - starts) * edges, axis=1) / np.sum(edges * edges, axis=1),
-        0.0,
-        1.0,
-    )
-    nearest = starts + along[:, None] * edges
-    return float(np.min(np.linalg.norm(point - nearest, axis=1)))
-
-
 def turn_signs(polygon: NDArray[np.float64]) -> NDArray[np.float64]:
     edge = np.roll(polygon, -1, axis=0) - polygon
     following = np.roll(edge, -1, axis=0)
     return edge[:, 0] * following[:, 1] - edge[:, 1] * following[:, 0]
+
+
+def pixel_area(face: FaceLandmarks, polygon: NDArray[np.float64]) -> float:
+    return shoelace_area(to_pixels(face, polygon))
 
 
 def shoelace_area(polygon: NDArray[np.float64]) -> float:
@@ -111,9 +152,9 @@ def regions_built_from(
 ) -> list[str]:
     return sorted(
         name
-        for name, indices in REGIONS.items()
+        for name, outline in REGIONS.items()
         for polygon in polygons
-        if built_from(polygon, face.points[list(indices)])
+        if built_from(polygon, outline_points(face, outline))
     )
 
 
@@ -121,9 +162,23 @@ def to_pixels(face: FaceLandmarks, points: NDArray[np.float64]) -> NDArray:
     return points * np.array([face.width, face.height], dtype=np.float64)
 
 
-def hull_vertex(face: FaceLandmarks, indices: tuple[int, ...]) -> int:
-    hull = ConvexHull(face.points[list(indices)])
-    return indices[int(hull.vertices[0])]
+def hull_vertex_landmark(face: FaceLandmarks, outline: tuple[OutlinePoint, ...]) -> int:
+    hull = ConvexHull(outline_points(face, outline))
+    return outline_landmarks((outline[int(hull.vertices[0])],))[0]
+
+
+def region_named(
+    face: FaceLandmarks, polygons: list[NDArray[np.float64]], name: str
+) -> NDArray[np.float64]:
+    region_points = outline_points(face, REGIONS[name])
+    matches = [p for p in polygons if built_from(p, region_points)]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def feature_mask(face: FaceLandmarks, indices: tuple[int, ...]) -> NDArray[np.uint8]:
+    points = face.points[list(indices)]
+    return region_mask(face.height, face.width, [points[ConvexHull(points).vertices]])
 
 
 def test_region_polygons_are_three_non_empty_convex_polygons_inside_the_image(
@@ -142,13 +197,17 @@ def test_region_polygons_are_three_non_empty_convex_polygons_inside_the_image(
 
 
 @pytest.mark.parametrize("region_name", list(REGIONS))
-def test_each_region_is_the_convex_hull_of_its_landmark_set(
+def test_each_region_is_the_convex_hull_of_its_outline_points(
     face: FaceLandmarks, polygons: list[NDArray[np.float64]], region_name: str
 ) -> None:
-    indices = REGIONS[region_name]
-    assert all(isinstance(i, int) for i in indices)
-    assert all(0 <= i < face.points.shape[0] for i in indices)
-    region_points = face.points[list(indices)]
+    outline = REGIONS[region_name]
+    assert all(
+        isinstance(item, int)
+        or (len(item) == 2 and all(isinstance(i, int) for i in item))
+        for item in outline
+    )
+    assert all(0 <= i < face.points.shape[0] for i in outline_landmarks(outline))
+    region_points = outline_points(face, outline)
     hull_area = ConvexHull(region_points).volume
 
     matches = [p for p in polygons if built_from(p, region_points)]
@@ -173,7 +232,7 @@ def test_no_eye_eyebrow_or_lip_landmark_lies_inside_any_region(
 def test_no_face_oval_landmark_lies_inside_or_on_the_forehead(
     face: FaceLandmarks,
 ) -> None:
-    forehead_points = face.points[list(FOREHEAD)]
+    forehead_points = outline_points(face, FOREHEAD)
     forehead = forehead_points[ConvexHull(forehead_points).vertices]
 
     on_or_inside = [
@@ -181,19 +240,6 @@ def test_no_face_oval_landmark_lies_inside_or_on_the_forehead(
     ]
 
     assert on_or_inside == []
-
-
-def test_forehead_keeps_five_percent_of_face_width_away_from_every_brow_landmark(
-    face: FaceLandmarks,
-) -> None:
-    forehead_points = to_pixels(face, face.points[list(FOREHEAD)])
-    forehead = forehead_points[ConvexHull(forehead_points).vertices]
-    brows = to_pixels(face, face.points[list(EYEBROWS)])
-    margin_px = BROW_MARGIN_SHARE_OF_FACE_WIDTH * face_width_px(face)
-
-    closest_px = min(distance_to_polygon(forehead, brow) for brow in brows)
-
-    assert closest_px >= margin_px
 
 
 def test_regions_are_a_forehead_above_the_brows_and_cheeks_either_side_of_the_nose(
@@ -216,7 +262,7 @@ def test_region_with_a_landmark_outside_the_frame_is_dropped_and_others_kept(
     face: FaceLandmarks, region_name: str
 ) -> None:
     in_frame = np.ones(face.points.shape[0], dtype=np.bool_)
-    in_frame[hull_vertex(face, REGIONS[region_name])] = False
+    in_frame[hull_vertex_landmark(face, REGIONS[region_name])] = False
     partly_outside = replace(face, in_frame=in_frame)
 
     polygons = region_polygons(partly_outside)
@@ -332,10 +378,69 @@ def test_face_cut_at_the_bottom_or_right_edge_marks_those_points_outside(
 def test_each_region_on_the_fixture_covers_at_least_its_pinned_pixel_count(
     face: FaceLandmarks, polygons: list[NDArray[np.float64]], region_name: str
 ) -> None:
-    region_points = face.points[list(REGIONS[region_name])]
-    matches = [p for p in polygons if built_from(p, region_points)]
-    assert len(matches) == 1
+    region = region_named(face, polygons, region_name)
 
-    mask = region_mask(face.height, face.width, matches)
+    mask = region_mask(face.height, face.width, [region])
 
     assert np.count_nonzero(mask) >= MIN_MASK_PIXELS[region_name]
+
+
+@pytest.mark.parametrize("region_name", list(EXPECTED_OUTLINES))
+def test_each_named_region_on_the_fixture_is_the_hull_of_its_larger_outline(
+    face: FaceLandmarks, region_name: str
+) -> None:
+    expected_points = outline_points(face, EXPECTED_OUTLINES[region_name])
+    expected = expected_points[ConvexHull(expected_points).vertices]
+
+    region = named_region_polygons(face)[region_name]
+
+    assert region.shape == expected.shape
+    assert built_from(region, expected)
+    assert shoelace_area(region) == pytest.approx(shoelace_area(expected), rel=1e-9)
+
+
+@pytest.mark.parametrize("region_name", list(AREA_RATIO_OVER_BASE))
+def test_each_region_covers_its_measured_multiple_of_the_base_outline_area(
+    face: FaceLandmarks, region_name: str
+) -> None:
+    base_points = face.points[list(BASE_OUTLINES[region_name])]
+    base = base_points[ConvexHull(base_points).vertices]
+    ratio, tolerance = AREA_RATIO_OVER_BASE[region_name]
+
+    region = named_region_polygons(face)[region_name]
+
+    assert pixel_area(face, region) / pixel_area(face, base) == pytest.approx(
+        ratio, abs=tolerance
+    )
+
+
+@pytest.mark.parametrize("feature", list(FEATURE_AREAS))
+def test_no_region_mask_shares_a_pixel_with_an_eye_brow_lip_or_nose_area(
+    face: FaceLandmarks, feature: str
+) -> None:
+    feature_pixels = feature_mask(face, FEATURE_AREAS[feature]) > 0
+
+    shared = {
+        name: int(
+            np.count_nonzero(
+                feature_pixels & (region_mask(face.height, face.width, [region]) > 0)
+            )
+        )
+        for name, region in named_region_polygons(face).items()
+    }
+
+    assert len(shared) == 3
+    assert shared == {"forehead": 0, "left_cheek": 0, "right_cheek": 0}
+
+
+@pytest.mark.parametrize("landmark", PAIR_ONLY_FOREHEAD_LANDMARKS)
+def test_forehead_pair_point_out_of_frame_drops_only_the_forehead(
+    face: FaceLandmarks, landmark: int
+) -> None:
+    in_frame = np.ones(face.points.shape[0], dtype=np.bool_)
+    in_frame[landmark] = False
+    partly_outside = replace(face, in_frame=in_frame)
+
+    named = named_region_polygons(partly_outside)
+
+    assert sorted(named) == ["left_cheek", "right_cheek"]
