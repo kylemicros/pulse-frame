@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -21,6 +22,11 @@ RGB_CHANNELS = 3
 FRAME_DIMENSIONS = 3
 TIMESTAMP_LIMIT_MS = (2**63 - 1) // 1000 + 1
 MEDIAPIPE_ERRORS = (RuntimeError, ValueError, OSError, IndexError)
+SEARCHED_ERROR_CHARACTERS = 4096
+LINUX_UNOPENED_LIBRARY = re.compile(
+    r"(?<![\w.+-])(?P<path>[\w.+-]+\.so(?:\.\d+)*): cannot open shared object file"
+)
+MACOS_UNOPENED_LIBRARY = re.compile(r"Library not loaded: (?P<path>[^\n]*?\.dylib)")
 
 
 @dataclass(frozen=True)
@@ -95,12 +101,34 @@ def open_landmarker(model: Path) -> FaceLandmarker:
     try:
         return FaceLandmarker.create_from_options(options)
     except MEDIAPIPE_ERRORS as error:
-        raise VisionError(
+        raise model_load_failure(error) from error
+
+
+def model_load_failure(error: Exception) -> VisionError:
+    library = missing_system_library(str(error))
+    if library is not None:
+        return VisionError(
             "MODEL_LOAD_FAILED",
-            f"MediaPipe could not load the face model ({type(error).__name__}).",
-            f"Delete {SHOWN_PATH}, then run {FETCH_COMMAND} in backend/ to"
-            " download it again.",
-        ) from error
+            f"MediaPipe could not open the system library {library}.",
+            f"Install or repair the system package that provides {library} with"
+            " your operating system's package manager, then start again.",
+        )
+    return VisionError(
+        "MODEL_LOAD_FAILED",
+        f"MediaPipe could not load the face model ({type(error).__name__}).",
+        f"Delete {SHOWN_PATH}, then run {FETCH_COMMAND} in backend/ to"
+        " download it again.",
+    )
+
+
+def missing_system_library(text: str) -> str | None:
+    searched = text[:SEARCHED_ERROR_CHARACTERS]
+    match = LINUX_UNOPENED_LIBRARY.search(searched) or MACOS_UNOPENED_LIBRARY.search(
+        searched
+    )
+    if match is None:
+        return None
+    return match.group("path").rsplit("/", 1)[-1]
 
 
 def run_detection(
