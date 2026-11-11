@@ -1,0 +1,32 @@
+[project]
+name = "pulse-frame"
+version = "0.1.0"
+description = "Local camera heart rate monitor backend"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "numpy",
+    "scipy",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+exclude-newer = "1 week"
+
+[tool.ruff]
+target-version = "py313"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "N", "PTH", "ASYNC"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
