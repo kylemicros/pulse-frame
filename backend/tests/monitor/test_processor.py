@@ -2,6 +2,7 @@ import math
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 from numpy.typing import NDArray
@@ -10,6 +11,7 @@ from pulse_frame.monitor.processor import FrameProcessor, FrameResult
 from pulse_frame.signal.tracker import MAX_GAP_MS, UPDATE_INTERVAL_MS, Reading
 from pulse_frame.vision.landmarks import FaceTracker
 from pulse_frame.vision.motion import MOVING_SHARE_OF_FACE_WIDTH
+from pulse_frame.vision.regions import named_region_polygons
 from tests.frames import (
     PULSE_STEP_MS,
     REFERENCE_FRAME_MS,
@@ -21,6 +23,7 @@ from tests.frames import (
     pulsed_frame,
     shifted_right,
 )
+from tests.signal.synthetic import PULSE_SIGNATURE
 from tests.signal.tracking import assert_ok_within_one_bpm
 from tests.vision.faces import (
     crop_above_brows,
@@ -30,17 +33,20 @@ from tests.vision.faces import (
 )
 
 FRAME_COUNT = 30
-SETTLED_BY_MS = 9_900
-OK_FROM_MS = 12_000
-PULSE_S = 14.0
+SETTLED_BY_MS = 19_900
+OK_FROM_MS = 21_000
+PULSE_S = 22.0
 FOLLOW_S = 1.5
 RESTART_WITHIN_MS = MAX_GAP_MS + PULSE_STEP_MS
-UPDATED_WITHIN_MS = UPDATE_INTERVAL_MS + PULSE_STEP_MS
 NO_REGION_STEP_PX = 3
 STILL_BEFORE_CHANGE = int(UPDATE_INTERVAL_MS / 2 / PULSE_STEP_MS)
+FOREHEAD_FLICKER_BPM = 120.0
+FOREHEAD_FLICKER_DEPTH = 0.03
+FLICKER_WITHIN_BPM = 10.0
 
 type Trace = list[tuple[int, FrameResult]]
 type Transform = Callable[[NDArray[np.uint8]], NDArray[np.uint8]]
+type TimedTransform = Callable[[NDArray[np.uint8], int], NDArray[np.uint8]]
 
 
 @pytest.fixture(scope="module")
@@ -54,6 +60,20 @@ def forehead_cropped(face_model: Path, astronaut_rgb: NDArray[np.uint8]) -> Tran
     with FaceTracker(face_model) as tracker:
         face = detect_face(tracker, astronaut_rgb, 0)
     return lambda rgb: crop_above_brows(rgb, face)
+
+
+@pytest.fixture(scope="module")
+def forehead_mask(
+    face_model: Path, astronaut_rgb: NDArray[np.uint8]
+) -> NDArray[np.bool_]:
+    with FaceTracker(face_model) as tracker:
+        face = detect_face(tracker, astronaut_rgb, 0)
+    polygon = named_region_polygons(face)["forehead"]
+    height, width = astronaut_rgb.shape[:2]
+    corners = np.round(polygon * np.array([width, height])).astype(np.int32)
+    mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.fillPoly(mask, [corners], 1)
+    return mask.astype(np.bool_)
 
 
 @pytest.fixture
@@ -73,6 +93,7 @@ class PulsedFace:
         processor: FrameProcessor,
         timestamps: list[int],
         transform: Transform | None = None,
+        timed: TimedTransform | None = None,
     ) -> Trace:
         trace = []
         for timestamp_ms in timestamps:
@@ -81,6 +102,8 @@ class PulsedFace:
             )
             if transform is not None:
                 frame = transform(frame)
+            if timed is not None:
+                frame = timed(frame, timestamp_ms)
             trace.append((timestamp_ms, processor.process(frame, timestamp_ms)))
         return trace
 
@@ -259,24 +282,18 @@ def face_results(trace: Trace) -> Trace:
 
 
 def is_sample(result: FrameResult) -> bool:
-    return result.face and bool(result.regions)
+    return result.face and len(result.regions) == 3
 
 
-def region_key(result: FrameResult) -> int:
-    return len(result.regions)
+def forehead_flicker(mask: NDArray[np.bool_]) -> TimedTransform:
+    def flicker(rgb: NDArray[np.uint8], timestamp_ms: int) -> NDArray[np.uint8]:
+        angle = 2.0 * np.pi * FOREHEAD_FLICKER_BPM / 60.0 * timestamp_ms / 1000.0
+        gain = 1.0 + FOREHEAD_FLICKER_DEPTH * np.sin(angle) * PULSE_SIGNATURE
+        flickered = rgb.astype(np.float64)
+        flickered[mask] *= gain
+        return np.clip(np.round(flickered), 0, 255).astype(np.uint8)
 
-
-def set_change_flags(results: list[FrameResult]) -> list[bool]:
-    flags = []
-    previous: int | None = None
-    for result in results:
-        if not is_sample(result):
-            flags.append(False)
-            continue
-        key = region_key(result)
-        flags.append(previous is not None and key != previous)
-        previous = key
-    return flags
+    return flicker
 
 
 def moving_shift_px(face_width: float) -> int:
@@ -315,7 +332,7 @@ def test_face_without_usable_regions_after_an_ok_pulse_never_reads_ok(
     assert all(result.reading.state == "acquiring" for result in past_gap)
 
 
-def test_forehead_leaving_the_frame_after_an_ok_pulse_is_moving_then_low_quality(
+def test_forehead_leaving_the_frame_after_an_ok_pulse_never_reads_ok(
     processor: FrameProcessor,
     astronaut_rgb: NDArray[np.uint8],
     forehead_cropped: Transform,
@@ -330,19 +347,18 @@ def test_forehead_leaving_the_frame_after_an_ok_pulse_is_moving_then_low_quality
     faces = face_results(cropped)
     assert len(faces) >= len(cropped) - 1
     assert all(len(result.regions) == 2 for _, result in faces)
-    expected = set_change_flags([result for _, result in trace + cropped])
-    expected_cropped = expected[len(trace) :]
-    assert [result.moving for _, result in cropped] == expected_cropped
-    assert expected_cropped.count(True) == 1
-    first_ms = cropped[expected_cropped.index(True)][0]
-    later = [result for t, result in cropped if t - first_ms >= UPDATED_WITHIN_MS]
-    assert later
-    for result in later:
-        assert result.reading.state == "low_quality"
-        assert result.reading.bpm is None
+    for _, result in cropped:
+        assert result.moving is False
+        assert_not_ok_and_blank(result.reading)
+    within_gap = [result for t, result in cropped if t - last_full_ms <= MAX_GAP_MS]
+    past_gap = [result for t, result in faces if t - last_full_ms >= RESTART_WITHIN_MS]
+    assert within_gap
+    assert past_gap
+    assert all(result.reading.state == "low_quality" for result in within_gap)
+    assert all(result.reading.state == "acquiring" for result in past_gap)
 
 
-def test_change_in_the_set_of_usable_regions_is_moving_for_one_face_frame(
+def test_two_region_frames_between_full_faces_move_nothing(
     processor: FrameProcessor,
     astronaut_rgb: NDArray[np.uint8],
     forehead_cropped: Transform,
@@ -353,15 +369,40 @@ def test_change_in_the_set_of_usable_regions_is_moving_for_one_face_frame(
 
     results = [processor.process(frame, clock.next_ms()) for frame in frames]
 
+    middle = [result for result in results[3:7] if result.face]
+    assert middle
+    assert all(len(result.regions) == 2 for result in middle)
     samples = [result for result in results if is_sample(result)]
-    assert len(samples) >= len(frames) - 2
-    counts = [region_key(result) for result in samples]
-    assert counts[0] == 3
-    assert counts[-1] == 3
-    assert 2 in counts
-    expected = set_change_flags(results)
-    assert expected.count(True) == 2
-    assert [result.moving for result in results] == expected
+    assert len(samples) >= len(frames) - len(middle) - 2
+    assert all(result.moving is False for result in results)
+
+
+@pytest.mark.parametrize("seed", [SEED, SEED + 1])
+def test_flicker_on_the_forehead_alone_leaves_the_shared_pulse_ok(
+    processor: FrameProcessor,
+    astronaut_rgb: NDArray[np.uint8],
+    forehead_mask: NDArray[np.bool_],
+    seed: int,
+) -> None:
+    face = PulsedFace(astronaut_rgb, seed)
+    timestamps = pulse_timestamps(np.random.default_rng(seed + 100), PULSE_S)
+
+    trace = face.frames(processor, timestamps, timed=forehead_flicker(forehead_mask))
+
+    first_ms = trace[0][0]
+    shown = [result.reading for _, result in trace if result.reading.state == "ok"]
+    near_flicker = [
+        reading
+        for reading in shown
+        if reading.bpm is not None
+        and abs(reading.bpm - FOREHEAD_FLICKER_BPM) <= FLICKER_WITHIN_BPM
+    ]
+    assert all(is_sample(result) for _, result in trace)
+    assert near_flicker == []
+    settled = [result for t, result in trace if t - first_ms >= OK_FROM_MS]
+    assert settled
+    for result in settled:
+        assert_ok_within_one_bpm(result.reading, TRUE_BPM)
 
 
 def test_one_blank_frame_between_full_faces_leaves_the_next_face_still_and_ok(
@@ -380,28 +421,6 @@ def test_one_blank_frame_between_full_faces_leaves_the_next_face_still_and_ok(
         assert len(result.regions) == 3
         assert result.moving is False
         assert_ok_within_one_bpm(result.reading, TRUE_BPM)
-
-
-def test_new_region_set_after_a_blank_frame_is_moving(
-    processor: FrameProcessor,
-    astronaut_rgb: NDArray[np.uint8],
-    forehead_cropped: Transform,
-) -> None:
-    clock = FrameClock()
-    frames = (
-        [astronaut_rgb] * 2
-        + [np.zeros_like(astronaut_rgb)]
-        + [forehead_cropped(astronaut_rgb)] * 3
-    )
-
-    results = [processor.process(frame, clock.next_ms()) for frame in frames]
-
-    assert results[2].face is False
-    crops = [result for result in results[3:] if result.face]
-    assert crops
-    assert len(crops[0].regions) == 2
-    assert crops[0].moving is True
-    assert all(result.moving is False for result in crops[1:])
 
 
 def test_gate_step_on_a_frame_without_regions_makes_the_next_face_moving(
@@ -446,26 +465,21 @@ def test_face_without_regions_between_full_faces_moves_nothing(
     assert all(result.moving is False for result in results)
 
 
-@pytest.mark.parametrize("change", ["shift", "forehead_cut"])
-def test_motion_after_an_ok_pulse_reads_low_quality_on_the_same_frame(
+def test_shift_after_an_ok_pulse_reads_low_quality_on_the_same_frame(
     processor: FrameProcessor,
     astronaut_rgb: NDArray[np.uint8],
     fixture_face_width_px: float,
-    forehead_cropped: Transform,
-    change: str,
 ) -> None:
     face, trace = settled_pulse(processor, astronaut_rgb, SEED)
     shift_px = moving_shift_px(fixture_face_width_px)
-    transforms: dict[str, Transform] = {
-        "shift": lambda rgb: shifted_right(rgb, shift_px),
-        "forehead_cut": forehead_cropped,
-    }
     follow = steps_after(trace[-1][0], FOLLOW_S)
     still = face.frames(processor, follow[:STILL_BEFORE_CHANGE])
     assert_ok_within_one_bpm(still[-1][1].reading, TRUE_BPM)
 
     changed = face.frames(
-        processor, follow[STILL_BEFORE_CHANGE:], transform=transforms[change]
+        processor,
+        follow[STILL_BEFORE_CHANGE:],
+        transform=lambda rgb: shifted_right(rgb, shift_px),
     )
 
     first = face_results(changed)[0][1]
@@ -499,27 +513,3 @@ def test_still_frames_without_regions_after_a_gate_step_are_not_moving(
     assert len(samples[0].regions) == 3
     assert samples[0].moving is True
     assert all(result.moving is False for result in samples[1:])
-
-
-def test_new_region_set_after_a_face_without_regions_is_moving(
-    processor: FrameProcessor,
-    astronaut_rgb: NDArray[np.uint8],
-    forehead_cropped: Transform,
-) -> None:
-    clock = FrameClock()
-    boxed = crop_to_a_face_without_usable_regions(astronaut_rgb)
-    frames = [astronaut_rgb] * 2 + [boxed] * 3 + [forehead_cropped(astronaut_rgb)] * 3
-
-    results = [processor.process(frame, clock.next_ms()) for frame in frames]
-
-    assert all(is_sample(result) for result in results[:2])
-    middle = results[2:5]
-    assert middle[-1].face is True
-    for result in middle:
-        assert result.regions == []
-        assert result.moving is False
-    crops = [result for result in results[5:] if is_sample(result)]
-    assert len(crops) >= 2
-    assert len(crops[0].regions) == 2
-    assert crops[0].moving is True
-    assert all(result.moving is False for result in crops[1:])
