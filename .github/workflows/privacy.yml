@@ -1,0 +1,36 @@
+name: privacy
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: privacy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        with:
+          version: "0.12.23"
+          enable-cache: false
+
+      - name: Scanner tests
+        run: uv run --no-project --python 3.13 python -I -m unittest discover -s .github/scripts/tests -t .github/scripts
+
+      - name: Scan the pushed or proposed commits
+        env:
+          SCAN_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          SCAN_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: uv run --no-project --python 3.13 python -I .github/scripts/privacy_scan.py --repo . --base "$SCAN_BASE" --head "$SCAN_HEAD"
