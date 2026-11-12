@@ -1,5 +1,7 @@
+import { MonitorPage } from "@/features/monitor/components/monitor-page"
+
 function App() {
-  return (<></>);
+  return <MonitorPage />
 }
 
 export default App
