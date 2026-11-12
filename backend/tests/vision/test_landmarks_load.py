@@ -17,7 +17,7 @@ MAC_MISSING = (
 )
 MAC_SPACED = (
     "dlopen(/x/a.dylib, 0x0001): Library not loaded:"
-    " /Users/x/Personal Projects/lib/libbar.dylib"
+    " /Applications/Some App.app/Contents/Frameworks/libbar.dylib"
 )
 NO_MATCH_LIMIT_SECONDS = 0.5
 
@@ -98,8 +98,8 @@ def test_macos_library_path_with_a_space_is_named_without_any_path(
     assert failure.__cause__ is error
     assert "could not open the system library libbar.dylib" in failure.message
     text = str(failure)
-    assert "Personal Projects" not in text
-    assert "/Users" not in text
+    assert "Some App" not in text
+    assert "/Applications" not in text
     assert "install" in failure.action.lower()
     assert "delete" not in failure.action.lower()
 
