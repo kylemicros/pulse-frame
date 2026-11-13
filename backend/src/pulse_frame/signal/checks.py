@@ -106,7 +106,7 @@ def check_timestamp_array(timestamps: NDArray[np.float64]) -> None:
 
 def check_value_rows(values: NDArray[np.float64], channels: int | None) -> None:
     rows_of_channels = values.ndim == 2 and values.shape[1] >= 1
-    if not rows_of_channels or channels not in (None, values.shape[1]):
+    if not rows_of_channels or channels not in {None, values.shape[1]}:
         wanted = "channels" if channels is None else str(channels)
         raise SignalError(
             "BAD_VALUES",

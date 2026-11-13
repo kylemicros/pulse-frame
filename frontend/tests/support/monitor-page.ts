@@ -42,7 +42,7 @@ export async function waitForMoreFrames(backend: MockBackend, count: number): Pr
 export async function spyOnCamera(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const spy = { calls: 0, streams: [] as MediaStream[] };
-    Object.defineProperty(window, 'cameraSpy', { value: spy });
+    Object.defineProperty(globalThis, 'cameraSpy', { value: spy });
     const devices = navigator.mediaDevices;
     const original = devices.getUserMedia.bind(devices);
     devices.getUserMedia = async (constraints?: MediaStreamConstraints) => {
@@ -96,7 +96,7 @@ export async function holdCamera(page: Page): Promise<void> {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    Object.defineProperty(window, 'releaseCamera', { value: () => release?.() });
+    Object.defineProperty(globalThis, 'releaseCamera', { value: () => release?.() });
     const devices = navigator.mediaDevices;
     const original = devices.getUserMedia.bind(devices);
     devices.getUserMedia = async (constraints?: MediaStreamConstraints) => {
@@ -107,7 +107,7 @@ export async function holdCamera(page: Page): Promise<void> {
 }
 
 export function releaseCamera(page: Page): Promise<void> {
-  return page.evaluate(() => (window as unknown as HeldCameraWindow).releaseCamera());
+  return page.evaluate(() => (globalThis as unknown as HeldCameraWindow).releaseCamera());
 }
 
 type RejectionWindow = Window & { unhandledRejections: string[] };
@@ -115,15 +115,15 @@ type RejectionWindow = Window & { unhandledRejections: string[] };
 export async function recordUnhandledRejections(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const reasons: string[] = [];
-    Object.defineProperty(window, 'unhandledRejections', { value: reasons });
-    window.addEventListener('unhandledrejection', (event) => {
+    Object.defineProperty(globalThis, 'unhandledRejections', { value: reasons });
+    globalThis.addEventListener('unhandledrejection', (event) => {
       reasons.push(String(event.reason));
     });
   });
 }
 
 export function unhandledRejections(page: Page): Promise<string[]> {
-  return page.evaluate(() => [...(window as unknown as RejectionWindow).unhandledRejections]);
+  return page.evaluate(() => [...(globalThis as unknown as RejectionWindow).unhandledRejections]);
 }
 
 type EncodingFailure = 'yields no image' | 'throws';
@@ -134,7 +134,7 @@ export function failFrameEncoding(page: Page, failure: EncodingFailure): Promise
       if (how === 'throws') {
         throw new DOMException('The canvas refused to encode in the test', 'SecurityError');
       }
-      window.setTimeout(() => callback(null), 0);
+      globalThis.setTimeout(() => callback(null), 0);
     };
   }, failure);
 }
@@ -168,12 +168,12 @@ export function ownTextLength(text: string, ...known: string[]): number {
 }
 
 export function cameraCalls(page: Page): Promise<number> {
-  return page.evaluate(() => (window as unknown as CameraWindow).cameraSpy.calls);
+  return page.evaluate(() => (globalThis as unknown as CameraWindow).cameraSpy.calls);
 }
 
 export function cameraTrackStates(page: Page): Promise<string[]> {
   return page.evaluate(() =>
-    (window as unknown as CameraWindow).cameraSpy.streams.flatMap((stream) =>
+    (globalThis as unknown as CameraWindow).cameraSpy.streams.flatMap((stream) =>
       stream.getTracks().map((track) => track.readyState),
     ),
   );
@@ -223,13 +223,13 @@ type WatchWindow = Window & { textWatches: Record<string, TextChange[]> };
 
 export async function watchText(locator: Locator, name: string): Promise<void> {
   await locator.evaluate((element, key) => {
-    const host = window as unknown as WatchWindow;
+    const host = globalThis as unknown as WatchWindow;
     host.textWatches ??= {};
     const changes: TextChange[] = [{ at: performance.now(), text: element.textContent ?? '' }];
     host.textWatches[key] = changes;
     new MutationObserver(() => {
       const text = element.textContent ?? '';
-      if (changes[changes.length - 1].text !== text) {
+      if (changes.at(-1)?.text !== text) {
         changes.push({ at: performance.now(), text });
       }
     }).observe(element, { characterData: true, childList: true, subtree: true });
@@ -237,7 +237,7 @@ export async function watchText(locator: Locator, name: string): Promise<void> {
 }
 
 export function watchedText(page: Page, name: string): Promise<TextChange[]> {
-  return page.evaluate((key) => (window as unknown as WatchWindow).textWatches[key], name);
+  return page.evaluate((key) => (globalThis as unknown as WatchWindow).textWatches[key], name);
 }
 
 export function pageNow(page: Page): Promise<number> {
@@ -286,13 +286,13 @@ export function stoppedTrackIds(page: Page): Promise<string[]> {
 
 export function cameraTrackIds(page: Page): Promise<string[]> {
   return page.evaluate(() =>
-    (window as unknown as CameraWindow).cameraSpy.streams.flatMap((stream) => stream.getTracks().map((track) => track.id)),
+    (globalThis as unknown as CameraWindow).cameraSpy.streams.flatMap((stream) => stream.getTracks().map((track) => track.id)),
   );
 }
 
 export function endVideoTracks(page: Page): Promise<void> {
   return page.evaluate(() => {
-    for (const stream of (window as unknown as CameraWindow).cameraSpy.streams) {
+    for (const stream of (globalThis as unknown as CameraWindow).cameraSpy.streams) {
       for (const track of stream.getVideoTracks()) {
         track.dispatchEvent(new Event('ended'));
       }
@@ -312,10 +312,9 @@ type TraceSpan = { widthShare: number; rightGapShare: number };
 
 export function waveformSpan(region: Locator): Promise<TraceSpan | null> {
   return region.evaluate((element) => {
-    const paths = Array.from(element.querySelectorAll('path')).filter(
+    const trace = Array.from(element.querySelectorAll('path')).find(
       (path) => ((path.getAttribute('d') ?? '').match(/[LCQSTAHV]/gi)?.length ?? 0) > 10,
     );
-    const trace = paths[0];
     const surface = trace?.ownerSVGElement;
     if (trace === undefined || surface === null || surface === undefined) {
       return null;

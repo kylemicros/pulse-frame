@@ -3,7 +3,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from opentelemetry import _logs, metrics, trace
+from opentelemetry import _logs, metrics, trace  # noqa: PLC2701
 from opentelemetry.util.types import Attributes
 from starlette.testclient import TestClient
 
@@ -80,7 +80,7 @@ def telemetry_asked(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def locked_package_names(lock_file: Path) -> list[str]:
-    lock = tomllib.loads(lock_file.read_text())
+    lock = tomllib.loads(lock_file.read_text(encoding="utf-8"))
     return [str(package["name"]) for package in lock["package"]]
 
 

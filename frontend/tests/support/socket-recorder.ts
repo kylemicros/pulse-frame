@@ -18,7 +18,7 @@ type RecorderWindow = Window & { socketRecords: SocketRecord[] };
 export async function recordSockets(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const records: SocketRecord[] = [];
-    Object.defineProperty(window, 'socketRecords', { value: records });
+    Object.defineProperty(globalThis, 'socketRecords', { value: records });
     const wrap = (Base: typeof WebSocket): typeof WebSocket =>
       class RecordedSocket extends Base {
         constructor(url: string | URL, protocols?: string | string[]) {
@@ -46,8 +46,8 @@ export async function recordSockets(page: Page): Promise<void> {
           });
         }
       };
-    let current = wrap(window.WebSocket);
-    Object.defineProperty(window, 'WebSocket', {
+    let current = wrap(globalThis.WebSocket);
+    Object.defineProperty(globalThis, 'WebSocket', {
       configurable: true,
       get: () => current,
       set: (value: typeof WebSocket) => {
@@ -59,7 +59,7 @@ export async function recordSockets(page: Page): Promise<void> {
 
 export function socketRecords(page: Page): Promise<SocketRecord[]> {
   return page.evaluate(
-    (url) => (window as unknown as RecorderWindow).socketRecords.filter((record) => record.url === url),
+    (url) => (globalThis as unknown as RecorderWindow).socketRecords.filter((record) => record.url === url),
     STREAM_URL,
   );
 }

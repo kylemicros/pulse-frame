@@ -49,7 +49,7 @@ const HTML_ENTITIES: Record<string, string> = {
 };
 
 function decodeEntities(value: string): string {
-  return value.replace(/&(?:#39|#x27|apos|quot|#34|lt|gt|amp);/gi, (entity) => HTML_ENTITIES[entity.toLowerCase()]);
+  return value.replaceAll(/&(?:#39|#x27|apos|quot|#34|lt|gt|amp);/gi, (entity) => HTML_ENTITIES[entity.toLowerCase()]);
 }
 
 function metaPolicies(html: string): string[] {
@@ -90,7 +90,7 @@ test.describe('content security policy', () => {
     const errors = collectPageErrors(page);
     await page.addInitScript(() => {
       const record: Violations = { violations: [] };
-      Object.defineProperty(window, 'cspRecord', { value: record });
+      Object.defineProperty(globalThis, 'cspRecord', { value: record });
       document.addEventListener('securitypolicyviolation', (event) => {
         record.violations.push(`${event.violatedDirective} ${event.blockedURI}`);
       });
@@ -107,7 +107,7 @@ test.describe('content security policy', () => {
     backend.pushReading({ bpm: 71.2, quality_db: 6.1, state: 'ok' });
     await expect(monitor.bpmValue).toHaveText(/^(71\.2|71)$/);
 
-    const violations = await page.evaluate(() => (window as unknown as Window & { cspRecord: Violations }).cspRecord.violations);
+    const violations = await page.evaluate(() => (globalThis as unknown as Window & { cspRecord: Violations }).cspRecord.violations);
     expect(violations).toEqual([]);
     expect(errors).toEqual([]);
   });

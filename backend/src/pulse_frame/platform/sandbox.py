@@ -46,7 +46,7 @@ def sandbox_status() -> SandboxStatus | None:
 
 
 def apply_loopback_sandbox() -> SandboxStatus:
-    global _applied
+    global _applied  # noqa: PLW0603
     with _lock:
         if _applied is not None:
             return _applied

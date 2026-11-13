@@ -75,7 +75,7 @@ export class StreamClient {
 
   close(): void {
     this.closed = true
-    window.clearTimeout(this.retryTimer)
+    globalThis.clearTimeout(this.retryTimer)
     this.retryTimer = undefined
     const socket = this.socket
     this.socket = null
@@ -126,6 +126,6 @@ export class StreamClient {
     this.events.onStatus(status)
     const delay = retryDelay(this.attempt)
     this.attempt += 1
-    this.retryTimer = window.setTimeout(() => this.connect(), delay)
+    this.retryTimer = globalThis.setTimeout(() => this.connect(), delay)
   }
 }

@@ -76,7 +76,7 @@ def current_status() -> Record | None:
 
 
 def write(path: Path, record: Record) -> None:
-    path.write_text(json.dumps(record))
+    path.write_text(json.dumps(record), encoding="utf-8")
 
 
 def write_at_exit(path: Path, record: Record) -> None:

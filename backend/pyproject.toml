@@ -32,7 +32,17 @@ target-version = "py313"
 src = ["src"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "N", "PTH", "ASYNC"]
+preview = true
+explicit-preview-rules = true
+select = [
+    "E", "F", "W", "I", "UP", "B", "SIM", "RUF", "N", "PTH", "ASYNC",
+    "FURB", "PERF", "PIE", "C4", "RET", "NPY", "FAST", "PLE", "PLW",
+    "PLC0206", "PLC0207", "PLC0208", "PLC0414", "PLC1802", "PLC3002",
+    "PLR0124", "PLR0133", "PLR0402", "PLR1704", "PLR1711", "PLR1714",
+    "PLR1716", "PLR1722", "PLR1730", "PLR1733", "PLR1736", "PLR5501",
+    "FURB101", "FURB103", "FURB113", "FURB131", "FURB142", "FURB148", "FURB152",
+    "PLC2701", "PLR6201", "PLW1514",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
