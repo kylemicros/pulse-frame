@@ -90,7 +90,7 @@ export class MonitorSession {
       return
     }
     this.ended = true
-    window.clearTimeout(this.pumpTimer)
+    globalThis.clearTimeout(this.pumpTimer)
     this.trackWatch.abort()
     this.client?.close()
     this.client = null
@@ -110,7 +110,7 @@ export class MonitorSession {
     this.connection += 1
     this.scheduled = false
     this.inFlightT = null
-    window.clearTimeout(this.pumpTimer)
+    globalThis.clearTimeout(this.pumpTimer)
     this.pump(0)
   }
 
@@ -141,8 +141,8 @@ export class MonitorSession {
     const connection = this.connection
     const spacing = this.lastSendMs + FRAME_SPACING_MS - performance.now()
     const wait = Math.max(minimumWaitMs, Math.ceil(spacing), 0)
-    window.clearTimeout(this.pumpTimer)
-    this.pumpTimer = window.setTimeout(() => void this.sendFrame(connection), wait)
+    globalThis.clearTimeout(this.pumpTimer)
+    this.pumpTimer = globalThis.setTimeout(() => void this.sendFrame(connection), wait)
   }
 
   private isStale(connection: number): boolean {

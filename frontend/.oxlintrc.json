@@ -1,6 +1,14 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "jsx-a11y", "import", "unicorn", "oxc"],
+  "plugins": [
+    "react",
+    "typescript",
+    "jsx-a11y",
+    "import",
+    "unicorn",
+    "oxc",
+    "promise"
+  ],
   "categories": {
     "correctness": "error",
     "suspicious": "warn"
@@ -8,9 +16,61 @@
   "rules": {
     "no-console": "warn",
     "react/react-in-jsx-scope": "off",
-    "import/no-unassigned-import": ["warn", { "allow": ["**/*.css"] }],
+    "import/no-unassigned-import": [
+      "warn",
+      {
+        "allow": [
+          "**/*.css"
+        ]
+      }
+    ],
     "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+    "react/only-export-components": [
+      "warn",
+      {
+        "allowConstantExport": true
+      }
+    ],
+    "promise/prefer-await-to-then": "error",
+    "promise/prefer-catch": "error",
+    "promise/no-return-wrap": "error",
+    "react/no-deriving-state-in-effects": "error",
+    "unicorn/prefer-global-this": "error",
+    "unicorn/prefer-at": "error",
+    "unicorn/prefer-array-some": "error",
+    "unicorn/prefer-array-find": "error",
+    "unicorn/prefer-array-flat-map": "error",
+    "unicorn/prefer-array-flat": "error",
+    "unicorn/prefer-set-has": "error",
+    "unicorn/prefer-includes": "error",
+    "unicorn/prefer-object-from-entries": "error",
+    "unicorn/prefer-modern-dom-apis": "error",
+    "unicorn/prefer-math-min-max": "error",
+    "unicorn/prefer-date-now": "error",
+    "unicorn/prefer-native-coercion-functions": "error",
+    "unicorn/prefer-modern-math-apis": "error",
+    "unicorn/prefer-string-replace-all": "error",
+    "unicorn/prefer-number-properties": "error",
+    "unicorn/prefer-structured-clone": "error",
+    "unicorn/prefer-math-trunc": "error",
+    "unicorn/prefer-string-slice": "error",
+    "unicorn/prefer-negative-index": "error",
+    "unicorn/prefer-array-index-of": "error",
+    "unicorn/prefer-regexp-test": "error",
+    "unicorn/prefer-optional-catch-binding": "error",
+    "unicorn/prefer-string-trim-start-end": "error",
+    "unicorn/prefer-blob-reading-methods": "error",
+    "unicorn/prefer-dom-node-append": "error",
+    "unicorn/prefer-dom-node-remove": "error",
+    "unicorn/prefer-code-point": "error",
+    "unicorn/prefer-keyboard-event-key": "error",
+    "unicorn/no-instanceof-array": "error",
+    "unicorn/no-useless-promise-resolve-reject": "error"
   },
-  "ignorePatterns": ["dist", "node_modules", "playwright-report", "test-results"]
+  "ignorePatterns": [
+    "dist",
+    "node_modules",
+    "playwright-report",
+    "test-results"
+  ]
 }

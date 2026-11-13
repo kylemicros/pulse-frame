@@ -46,8 +46,8 @@ export function useMonitor() {
     if (noticeId === null) {
       return undefined
     }
-    const timer = window.setTimeout(() => dispatch({ type: "notice-expired", id: noticeId }), NOTICE_SHOWN_MS)
-    return () => window.clearTimeout(timer)
+    const timer = globalThis.setTimeout(() => dispatch({ type: "notice-expired", id: noticeId }), NOTICE_SHOWN_MS)
+    return () => globalThis.clearTimeout(timer)
   }, [noticeId])
 
   return { state, videoRef, start, stop }

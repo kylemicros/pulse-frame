@@ -11,11 +11,11 @@ export function useHeldValue<T extends string>(value: T, holdMs: number = HOLD_M
       return undefined
     }
     const wait = Math.max(0, shownAt.current + holdMs - performance.now())
-    const timer = window.setTimeout(() => {
+    const timer = globalThis.setTimeout(() => {
       shownAt.current = performance.now()
       setShown(value)
     }, wait)
-    return () => window.clearTimeout(timer)
+    return () => globalThis.clearTimeout(timer)
   }, [value, shown, holdMs])
 
   return shown

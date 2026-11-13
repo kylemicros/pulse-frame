@@ -24,11 +24,11 @@ export function useShownBpm(reading: BpmMessage | null): ShownBpm {
     if (hold.held === null) {
       return undefined
     }
-    const timer = window.setTimeout(
+    const timer = globalThis.setTimeout(
       () => setHold((latest) => (latest === hold ? { ...latest, held: null } : latest)),
       HOLD_MS,
     )
-    return () => window.clearTimeout(timer)
+    return () => globalThis.clearTimeout(timer)
   }, [hold])
 
   if (current.lastOk !== null) {
