@@ -72,5 +72,258 @@
     "node_modules",
     "playwright-report",
     "test-results"
+  ],
+  "overrides": [
+    {
+      "files": [
+        "src/**"
+      ],
+      "rules": {
+        "import/no-cycle": [
+          "error",
+          {
+            "ignoreTypes": false
+          }
+        ],
+        "import/no-relative-parent-imports": "error",
+        "unicorn/filename-case": [
+          "error",
+          {
+            "case": "kebabCase"
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/lib/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/components",
+                  "@/components/**",
+                  "@/features",
+                  "@/features/**"
+                ],
+                "message": "lib is the bottom layer and imports neither components nor features. Move the shared code into lib, or pass it in from the caller."
+              },
+              {
+                "group": [
+                  "@/app",
+                  "@/app.*",
+                  "@/main",
+                  "@/main.*"
+                ],
+                "message": "The app and the entry are the top layer, so nothing below them imports @/app or @/main. Move the shared code into @/lib or @/components and import it from there."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/components/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/features",
+                  "@/features/**"
+                ],
+                "message": "Shared components do not import features; pass data in as props."
+              },
+              {
+                "group": [
+                  "@/app",
+                  "@/app.*",
+                  "@/main",
+                  "@/main.*"
+                ],
+                "message": "The app and the entry are the top layer, so nothing below them imports @/app or @/main. Move the shared code into @/lib or @/components and import it from there."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/features/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/features/*/**"
+                ],
+                "message": "This feature has no import rules yet, so deep @/features imports are blocked. Add an override for its folder to frontend/.oxlintrc.json, copying the capture or monitor block."
+              },
+              {
+                "group": [
+                  "@/app",
+                  "@/app.*",
+                  "@/main",
+                  "@/main.*"
+                ],
+                "message": "The app and the entry are the top layer, so nothing below them imports @/app or @/main. Move the shared code into @/lib or @/components and import it from there."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/features/capture/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/features/**",
+                  "!@/features/capture/**"
+                ],
+                "message": "capture is a leaf feature and imports no other feature. Move the shared code into @/lib or @/components."
+              },
+              {
+                "group": [
+                  "@/app",
+                  "@/app.*",
+                  "@/main",
+                  "@/main.*"
+                ],
+                "message": "The app and the entry are the top layer, so nothing below them imports @/app or @/main. Move the shared code into @/lib or @/components and import it from there."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/features/monitor/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/features/*/**",
+                  "!@/features/monitor/**"
+                ],
+                "message": "Reach another feature only through its index, e.g. @/features/capture."
+              },
+              {
+                "group": [
+                  "@/app",
+                  "@/app.*",
+                  "@/main",
+                  "@/main.*"
+                ],
+                "message": "The app and the entry are the top layer, so nothing below them imports @/app or @/main. Move the shared code into @/lib or @/components and import it from there."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/app.tsx"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/features/*/**"
+                ],
+                "message": "The app reaches a feature only through its index, e.g. @/features/monitor."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/main.tsx"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/features",
+                  "@/features/**"
+                ],
+                "message": "The entry imports no feature; it mounts @/app, which reaches the features."
+              }
+            ]
+          }
+        ]
+      }
+    }
   ]
 }
