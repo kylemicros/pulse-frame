@@ -88,8 +88,9 @@ def session_schedule(
         schedule.append(("motion", t, encode_jpeg(moved, JPEG_QUALITY)))
     last = schedule[-1][1]
     blank = encode_jpeg(np.zeros_like(rgb), JPEG_QUALITY)
-    for i in range(BLANK_FRAMES):
-        schedule.append(("blank", last + (i + 1) * SESSION_STEP_MS, blank))
+    schedule.extend(
+        ("blank", last + (i + 1) * SESSION_STEP_MS, blank) for i in range(BLANK_FRAMES)
+    )
     return schedule
 
 

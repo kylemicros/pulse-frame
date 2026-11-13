@@ -78,12 +78,13 @@ def with_sof_size(jpeg: bytes, width: int, height: int) -> bytes:
     segments, scan = header_segments(jpeg)
     changed = []
     for segment in segments:
+        kept = segment
         if is_sof(segment):
             body = bytearray(segment)
             body[SOF_HEIGHT_AT : SOF_HEIGHT_AT + 2] = height.to_bytes(2, "big")
             body[SOF_WIDTH_AT : SOF_WIDTH_AT + 2] = width.to_bytes(2, "big")
-            segment = bytes(body)
-        changed.append(segment)
+            kept = bytes(body)
+        changed.append(kept)
     return rebuilt(changed, scan)
 
 
@@ -104,10 +105,11 @@ def with_corrupt_huffman_table(jpeg: bytes) -> bytes:
     changed = []
     corrupted = False
     for segment in segments:
+        kept = segment
         if segment[1] == DHT and not corrupted:
-            segment = segment[:DHT_COUNTS_AT] + b"\xff" * (len(segment) - DHT_COUNTS_AT)
+            kept = segment[:DHT_COUNTS_AT] + b"\xff" * (len(segment) - DHT_COUNTS_AT)
             corrupted = True
-        changed.append(segment)
+        changed.append(kept)
     return rebuilt(changed, scan)
 
 

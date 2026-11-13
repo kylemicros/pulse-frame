@@ -168,8 +168,12 @@ class StreamSession:
         replies: list[Message] = []
         if processed.waveform is not None:
             self._last_reading_ms = timestamp_ms
-            replies.append(pulse_message(processed.waveform))
-            replies.append(bpm_message(timestamp_ms, result.reading))
+            replies.extend(
+                (
+                    pulse_message(processed.waveform),
+                    bpm_message(timestamp_ms, result.reading),
+                )
+            )
         replies.append(frame_message(timestamp_ms, result))
         return replies
 

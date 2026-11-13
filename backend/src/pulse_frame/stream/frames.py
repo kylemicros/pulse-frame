@@ -59,9 +59,9 @@ def jpeg_size(jpeg: bytes) -> tuple[int, int]:
     at = len(SOI)
     while True:
         marker, at = next_marker(jpeg, at)
-        if marker in (SOS_MARKER, EOI_MARKER):
+        if marker in {SOS_MARKER, EOI_MARKER}:
             raise FrameRejectedError("BAD_FRAME", "no_sof")
-        if marker in (SOI_MARKER, STUFFED_ZERO):
+        if marker in {SOI_MARKER, STUFFED_ZERO}:
             raise FrameRejectedError("BAD_FRAME", "bad_marker")
         if marker in STANDALONE_MARKERS:
             continue
