@@ -1,4 +1,4 @@
-import { MonitorPage } from "@/features/monitor/components/monitor-page"
+import { MonitorPage } from "@/features/monitor"
 
 function App() {
   return <MonitorPage />
