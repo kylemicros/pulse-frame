@@ -108,6 +108,34 @@ BINARY_BLOBS = [
     ("notes/blob.bin", b"plain\x00notes\n"),
 ]
 MISSING_HEAD = "0123456789abcdef0123456789abcdef01234567"
+DEPENDABOT_ADDRESS = joined("support", "@", "github.com")
+DEPENDABOT_SIGNOFF = f"Signed-off-by: dependabot[bot] <{DEPENDABOT_ADDRESS}>"
+DEPENDABOT_MESSAGE = "\n".join(
+    [
+        "build(deps): bump vite from 7.1.0 to 7.1.1 in /frontend",
+        "",
+        "Bumps [vite](https://github.com/vitejs/vite) from 7.1.0 to 7.1.1.",
+        "",
+        "---",
+        "updated-dependencies:",
+        "- dependency-name: vite",
+        "  dependency-version: 7.1.1",
+        "",
+        DEPENDABOT_SIGNOFF,
+        "",
+    ]
+)
+SIGNOFF_ELSEWHERE = [
+    ("address in the subject", f"docs: ask {DEPENDABOT_ADDRESS}"),
+    ("address in the body", f"docs: notes\n\nask {DEPENDABOT_ADDRESS} about it\n\n{DEPENDABOT_SIGNOFF}"),
+    ("sign-off line in the body", f"docs: notes\n\n{DEPENDABOT_SIGNOFF}\n\nmore notes"),
+    ("another trailer", f"docs: notes\n\nCo-authored-by: dependabot[bot] <{DEPENDABOT_ADDRESS}>"),
+    ("another name", f"docs: notes\n\nSigned-off-by: someone <{DEPENDABOT_ADDRESS}>"),
+    ("lower case token", f"docs: notes\n\nsigned-off-by: dependabot[bot] <{DEPENDABOT_ADDRESS}>"),
+    ("indented line", f"docs: notes\n\n  {DEPENDABOT_SIGNOFF}"),
+    ("text after the line", f"docs: notes\n\n{DEPENDABOT_SIGNOFF} thanks"),
+    ("a second address in the trailers", f"docs: notes\n\n{DEPENDABOT_SIGNOFF}\nCc: {UNKNOWN_EMAIL}"),
+]
 
 
 class Repo:
@@ -403,6 +431,25 @@ class AllowlistTests(unittest.TestCase):
             committer=WEB_MERGE,
         )
         self.assertEqual(repo.scan(), [])
+
+
+class DependabotSignoffTests(unittest.TestCase):
+    def test_dependabot_sign_off_trailer_passes_in_a_commit_message(self):
+        repo = Repo(self)
+        repo.commit({NOTES: "plain notes\n"}, DEPENDABOT_MESSAGE)
+        self.assertEqual(repo.scan(), [])
+
+    def test_dependabot_address_anywhere_else_in_a_commit_message_is_found(self):
+        for label, message in SIGNOFF_ELSEWHERE:
+            with self.subTest(label=label):
+                repo = Repo(self)
+                sha = repo.commit({NOTES: "plain notes\n"}, message)
+                self.assertEqual(found(repo.scan()), {("email", f"commit {sha[:7]} message")})
+
+    def test_dependabot_sign_off_line_in_an_added_line_is_found(self):
+        repo = Repo(self)
+        repo.commit({NOTES: f"notes\n\n{DEPENDABOT_SIGNOFF}\n"}, "docs: add notes")
+        self.assertEqual(found(repo.scan()), {("email", NOTES)})
 
 
 class CommandLineTests(unittest.TestCase):
