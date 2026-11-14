@@ -39,6 +39,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libegl1 libgles2
 
+      - name: Dependency audit
+        run: uv audit --preview-features audit-command
+
       - name: Install dependencies
         run: uv sync --locked
 
