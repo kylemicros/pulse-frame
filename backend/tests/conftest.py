@@ -15,7 +15,7 @@ from pulse_frame.vision.model import ensure_model  # noqa: E402
 FIXTURES = Path(__file__).parent / "fixtures"
 UNSANDBOXED_ACTION = (
     "Run the backend tests on macOS, where the loopback-only sandbox applies;"
-    " only GitHub Actions on Linux may run them unsandboxed (R18 exception)."
+    " only GitHub Actions on Linux may run them unsandboxed."
 )
 
 
