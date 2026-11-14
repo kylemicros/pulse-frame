@@ -74,6 +74,8 @@ EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-
 WEB_MERGE_EMAIL = "noreply@github.com"
 USERS_NOREPLY_SUFFIX = "@users.noreply.github.com"
 DECORATOR_DOMAIN_PREFIX = "pytest."
+DEPENDABOT_SIGNOFF = "Signed-off-by: dependabot[bot] <support" + "@github.com>"
+PARAGRAPH_BREAK = "\n\n"
 ATTRIBUTES_FILE = ".gitattributes"
 BINARY_FILE = "binary file"
 NUL = b"\0"
@@ -157,6 +159,14 @@ def text_findings(text: str, where: str) -> list[Finding]:
     if any(not text_email_allowed(match.group(0)) for match in EMAIL.finditer(text)):
         findings.append(Finding("email", where))
     return findings
+
+
+def without_dependabot_signoff(message: str) -> str:
+    body, separator, trailers = message.rstrip("\n").rpartition(PARAGRAPH_BREAK)
+    if not separator:
+        return message
+    kept = [line for line in trailers.split("\n") if line != DEPENDABOT_SIGNOFF]
+    return body + separator + "\n".join(kept)
 
 
 def place(path: str) -> str:
@@ -251,7 +261,7 @@ def commit_details(git: Git, sha: str) -> tuple[list[str], str, str, str]:
 def commit_findings(git: Git, sha: str, allowed: set[str]) -> list[Finding]:
     short = sha[:7]
     parents, author, committer, message = commit_details(git, sha)
-    findings = text_findings(message, f"commit {short} message")
+    findings = text_findings(without_dependabot_signoff(message), f"commit {short} message")
     for role, email in (("author", author), ("committer", committer)):
         if email and not role_email_allowed(email, allowed):
             findings.append(Finding("email", f"commit {short} {role}"))
