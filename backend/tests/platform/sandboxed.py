@@ -429,6 +429,40 @@ def scenario_session(path: Path) -> None:
     )
 
 
+class ImportRecorder(MetaPathFinder):
+    def __init__(self, seen: list[list[object]]) -> None:
+        self.seen = seen
+        self.names: set[str] = set()
+
+    def find_spec(
+        self, fullname: str, path: object = None, target: object = None
+    ) -> ModuleSpec | None:
+        top = fullname.partition(".")[0]
+        if top not in self.names:
+            self.names.add(top)
+            self.seen.append([top, current_status()])
+        return None
+
+
+def scenario_conftest_imports(path: Path) -> None:
+    seen: list[list[object]] = []
+    record: Record = {"imports": seen}
+    write_at_exit(path, record)
+    sys.meta_path.insert(0, ImportRecorder(seen))
+    importlib.import_module("tests.conftest")
+    record["status"] = current_status()
+
+
+def scenario_conftest_unsupported(path: Path, target: str) -> None:
+    record: Record = {"unsupported": apply_sandbox_on("linux")}
+    write_at_exit(path, record)
+    import pytest
+
+    raise SystemExit(
+        pytest.main(["--collect-only", "-q", "-p", "no:cacheprovider", target])
+    )
+
+
 def scenario_live_check(path: Path) -> None:
     run_live_check_on_the_astronaut(live_check_record(path))
 
@@ -533,6 +567,8 @@ SCENARIOS: dict[str, Callable[..., None]] = {
     "loopback-and-detect": scenario_loopback_and_detect,
     "nettop": scenario_nettop,
     "session": scenario_session,
+    "conftest-imports": scenario_conftest_imports,
+    "conftest-unsupported": scenario_conftest_unsupported,
     "live-check": scenario_live_check,
     "live-check-unsupported": scenario_live_check_unsupported,
     "live-check-broken": scenario_live_check_broken,

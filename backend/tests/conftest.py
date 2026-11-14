@@ -1,15 +1,37 @@
+import os
 from pathlib import Path
 
-import cv2
-import numpy as np
-import pytest
-from numpy.typing import NDArray
-
 from pulse_frame.platform.sandbox import apply_loopback_sandbox
-from pulse_frame.vision.model import ensure_model
 
 SESSION_SANDBOX = apply_loopback_sandbox()
+
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+from numpy.typing import NDArray  # noqa: E402
+
+from pulse_frame.vision.model import ensure_model  # noqa: E402
+
 FIXTURES = Path(__file__).parent / "fixtures"
+UNSANDBOXED_ACTION = (
+    "Run the backend tests on macOS, where the loopback-only sandbox applies;"
+    " only GitHub Actions on Linux may run them unsandboxed."
+)
+
+
+def is_linux_ci() -> bool:
+    return (
+        os.environ.get("GITHUB_ACTIONS") == "true"
+        and os.environ.get("RUNNER_OS") == "Linux"
+    )
+
+
+def pytest_configure() -> None:
+    if not SESSION_SANDBOX.applied and not is_linux_ci():
+        pytest.exit(
+            f"{SESSION_SANDBOX.code}: {SESSION_SANDBOX.reason} {UNSANDBOXED_ACTION}",
+            returncode=pytest.ExitCode.USAGE_ERROR,
+        )
 
 
 def pytest_report_header() -> str:

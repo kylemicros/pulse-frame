@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,7 +25,9 @@ class Probe:
     record: Record
 
 
-def run_probe(scenario: str, folder: Path, *args: str) -> Probe:
+def run_probe(
+    scenario: str, folder: Path, *args: str, env: Mapping[str, str] | None = None
+) -> Probe:
     record_path = folder / f"{scenario}.json"
     done = subprocess.run(
         [
@@ -36,6 +39,7 @@ def run_probe(scenario: str, folder: Path, *args: str) -> Probe:
             *args,
         ],
         cwd=BACKEND,
+        env=env,
         capture_output=True,
         text=True,
         timeout=PROBE_TIMEOUT_S,
