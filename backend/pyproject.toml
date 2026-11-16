@@ -19,6 +19,7 @@ dev = [
     "pytest",
     "pytest-timeout>=2.4.0",
     "ruff",
+    "ty>=0.0.99",
 ]
 
 [build-system]
@@ -43,6 +44,7 @@ select = [
     "PLR1716", "PLR1722", "PLR1730", "PLR1733", "PLR1736", "PLR5501",
     "FURB101", "FURB103", "FURB113", "FURB131", "FURB142", "FURB148", "FURB152",
     "PLC2701", "PLR6201", "PLW1514",
+    "UP052", "DTZ003",
 ]
 
 [tool.pytest.ini_options]
@@ -50,5 +52,13 @@ testpaths = ["tests"]
 timeout = 60
 timeout_method = "thread"
 filterwarnings = [
-    'ignore:Using `httpx` with `starlette\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning',
+    "error",
+    'ignore:Using `httpx` with `starlette\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning:tests\.stream\.',
 ]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.rules]
+all = "ignore"
+deprecated = "error"
