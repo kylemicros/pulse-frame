@@ -10,7 +10,7 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from importlib.abc import MetaPathFinder
@@ -90,7 +90,7 @@ def apply_sandbox() -> Record | None:
 
 
 @contextmanager
-def faked_platform(name: str) -> Iterator[None]:
+def faked_platform(name: str) -> Generator[None]:
     importlib.import_module(SANDBOX_MODULE)
     real = sys.platform
     sys.platform = name

@@ -5,7 +5,7 @@ import math
 import re
 import struct
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -174,7 +174,7 @@ def open_stream(
     origin: str | None = DEV_ORIGIN,
     path: str = ENDPOINT,
     headers: dict[str, str] | None = None,
-) -> Iterator[Stream]:
+) -> Generator[Stream]:
     sent = origin_header(origin) | (headers or {})
     with TestClient(app) as client, client.websocket_connect(path, headers=sent) as ws:
         yield Stream(ws, clock)
