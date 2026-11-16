@@ -15,6 +15,7 @@ from tests.platform.sandboxed import (
 
 ON_MACOS = sys.platform == "darwin"
 PROBE_TIMEOUT_S = 40
+PROBE_MODULE = "tests.platform.sandboxed"
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,14 @@ class Probe:
     record: Record
 
 
+def read_probe_record(record_path: Path, returncode: int, stderr: str) -> Record:
+    assert record_path.exists(), (
+        f"The {record_path.stem} probe wrote no record. Exit {returncode}."
+        f" Stderr tail: {stderr[-2000:]}"
+    )
+    return json.loads(record_path.read_text(encoding="utf-8"))
+
+
 def run_probe(
     scenario: str, folder: Path, *args: str, env: Mapping[str, str] | None = None
 ) -> Probe:
@@ -33,7 +42,7 @@ def run_probe(
         [
             sys.executable,
             "-m",
-            "tests.platform.sandboxed",
+            PROBE_MODULE,
             scenario,
             str(record_path),
             *args,
@@ -45,12 +54,11 @@ def run_probe(
         timeout=PROBE_TIMEOUT_S,
         check=False,
     )
-    assert record_path.exists(), (
-        f"The {scenario} probe wrote no record. Exit {done.returncode}."
-        f" Stderr tail: {done.stderr[-2000:]}"
-    )
     return Probe(
-        done.returncode, done.stdout, done.stderr, json.loads(record_path.read_text())
+        done.returncode,
+        done.stdout,
+        done.stderr,
+        read_probe_record(record_path, done.returncode, done.stderr),
     )
 
 

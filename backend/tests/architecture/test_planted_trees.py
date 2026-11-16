@@ -8,7 +8,6 @@ from tests.architecture.import_check import ImportViolation, import_violations
 
 PROJECT = "pulse_frame"
 NO_PROJECT_PACKAGE = "no project package"
-ENTRY_ALLOWED = ("signal", "vision", "platform", "monitor")
 DATA_MODULE = "backend/tests/architecture/allowed_imports.py"
 ROOT_IMPORT = "not the `pulse_frame` root"
 ABSOLUTE_FORM = "from pulse_frame.<package>.<module> import <name>"
@@ -75,6 +74,22 @@ COMPLIANT_TREE = {
         "    from pulse_frame.monitor.processor import FrameProcessor\n"
         "    return FrameProcessor\n"
     ),
+    "tools/sessions.py": (
+        "import argparse\n"
+        "from pulse_frame.platform.sandbox import apply_loopback_sandbox\n"
+        "from pulse_frame.store.sessions import delete_session\n"
+    ),
+    "store/__init__.py": "",
+    "store/errors.py": "",
+    "store/connection.py": (
+        "import os\n"
+        "import psycopg\n"
+        "from psycopg.rows import TupleRow\n"
+        "from pulse_frame.store.errors import StoreError\n"
+    ),
+    "store/sessions.py": (
+        "from psycopg import sql\nfrom pulse_frame.store.connection import connect\n"
+    ),
 }
 
 
@@ -115,6 +130,60 @@ LEAF_IMPORTS_A_PACKAGE = [
         "from pulse_frame import monitor",
         "layering",
         (),
+    ),
+    Planted(
+        "store/planted.py",
+        "import psycopg\nfrom pulse_frame.signal.pos import pos\n",
+        2,
+        "from pulse_frame.signal.pos import pos",
+        "layering",
+        (),
+    ),
+]
+
+PACKAGE_IMPORTS_THE_STORE = [
+    Planted(
+        "stream/planted.py",
+        "from pulse_frame.store.sessions import session_ids\n",
+        1,
+        "from pulse_frame.store.sessions import session_ids",
+        "layering",
+        ("signal", "vision", "platform", "monitor"),
+    ),
+    Planted(
+        "monitor/planted.py",
+        "import pulse_frame.store.connection\n",
+        1,
+        "import pulse_frame.store.connection",
+        "layering",
+        ("signal", "vision"),
+    ),
+]
+
+PSYCOPG_OUTSIDE_STORE = [
+    Planted(
+        "tools/planted.py",
+        "import psycopg\n",
+        1,
+        "import psycopg",
+        "third-party placement",
+        ("store",),
+    ),
+    Planted(
+        "signal/planted.py",
+        "from psycopg import sql\n",
+        1,
+        "from psycopg import sql",
+        "third-party placement",
+        ("store",),
+    ),
+    Planted(
+        "stream/planted.py",
+        "from psycopg.rows import TupleRow\n",
+        1,
+        "from psycopg.rows import TupleRow",
+        "third-party placement",
+        ("store",),
     ),
 ]
 
@@ -163,7 +232,7 @@ ENTRIES_IMPORT_EACH_OTHER = [
         1,
         "from pulse_frame.tools.live_check import run",
         "layering",
-        ENTRY_ALLOWED,
+        ("signal", "vision", "platform", "monitor"),
     ),
     Planted(
         "tools/planted.py",
@@ -171,7 +240,7 @@ ENTRIES_IMPORT_EACH_OTHER = [
         1,
         "from pulse_frame.stream.app import create_app",
         "layering",
-        ENTRY_ALLOWED,
+        ("signal", "vision", "platform", "monitor", "store"),
     ),
 ]
 
@@ -300,7 +369,7 @@ FUNCTION_IMPORTS = [
         4,
         "from pulse_frame.stream.app import create_app",
         "layering",
-        ENTRY_ALLOWED,
+        ("signal", "vision", "platform", "monitor", "store"),
     ),
     Planted(
         "signal/planted.py",
@@ -477,6 +546,18 @@ def test_web_module_outside_stream_fails(tmp_path: Path, planted: Planted) -> No
 
 @pytest.mark.parametrize("planted", MEDIAPIPE_OUTSIDE_VISION, ids=case_id)
 def test_mediapipe_outside_vision_fails(tmp_path: Path, planted: Planted) -> None:
+    assert_single_violation(tmp_path, planted)
+
+
+@pytest.mark.parametrize("planted", PACKAGE_IMPORTS_THE_STORE, ids=case_id)
+def test_package_other_than_tools_importing_store_fails(
+    tmp_path: Path, planted: Planted
+) -> None:
+    assert_single_violation(tmp_path, planted)
+
+
+@pytest.mark.parametrize("planted", PSYCOPG_OUTSIDE_STORE, ids=case_id)
+def test_psycopg_outside_store_fails(tmp_path: Path, planted: Planted) -> None:
     assert_single_violation(tmp_path, planted)
 
 

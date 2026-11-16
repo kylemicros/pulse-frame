@@ -2,7 +2,7 @@
 
 A webcam heart-rate monitor. Your browser sends face frames to a small backend on your own machine, and the page shows your pulse in beats per minute, a live pulse trace and how good the signal is. It works by remote photoplethysmography (rPPG): each heartbeat changes the colour of your skin a tiny bit, and the backend reads that change from your forehead and cheeks.
 
-Nothing leaves your machine on macOS. The backend listens on 127.0.0.1 only, frames live in memory while they are read, and nothing is saved. On macOS the server also wraps itself in a network sandbox, so nothing it loads can phone home. Linux has no such sandbox yet; see Known limitations.
+Nothing leaves your machine on macOS. The backend listens on 127.0.0.1 only, frames live in memory while they are read, and the web app saves nothing. The optional local store keeps session numbers (never frames or images) in a Postgres on your Mac only. On macOS the server also wraps itself in a network sandbox, so nothing it loads can phone home. Linux has no such sandbox yet; see Known limitations.
 
 ## Run it
 

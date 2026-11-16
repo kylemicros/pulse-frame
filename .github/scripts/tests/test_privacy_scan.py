@@ -1,10 +1,13 @@
 import contextlib
 import gzip
 import io
+import itertools
 import os
 import shutil
+import string
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -107,6 +110,207 @@ BINARY_BLOBS = [
     ("notes/today.txt.gz", gzip.compress(b"plain notes\n", mtime=0)),
     ("notes/blob.bin", b"plain\x00notes\n"),
 ]
+MIGRATION = "supabase/migrations/20261116070812_session_store.sql"
+SCHEMA_ONLY = (
+    "create table public.sessions (\n"
+    "    id bigint generated always as identity primary key,\n"
+    "    started_at timestamptz not null default now(),\n"
+    "    bpm real check (bpm > 0)\n"
+    ");\n"
+    "create index sessions_started_at on public.sessions (started_at);\n"
+    "alter table public.sessions enable row level security;\n"
+)
+EXEMPT_MIGRATIONS = [
+    MIGRATION,
+    "supabase/migrations/20261117093000_add_quality.sql",
+]
+NOT_EXEMPT_SQL = [
+    "supabase/seed.sql",
+    "supabase/schemas/20261116070812_session_store.sql",
+    "supabase/migrations/sub/20261116070812_session_store.sql",
+    "supabase/migrations/20261116070812_session_store.SQL",
+    "supabase/migrations/20261116070812_session_store.Sql",
+    "supabase/migrations/20261116070812_Session_Store.sql",
+    "supabase/migrations/2026111607081_session_store.sql",
+    "supabase/migrations/202611160708120_session_store.sql",
+    "supabase/migrations/20261116070812.sql",
+    "supabase/migrations/session_store.sql",
+    "supabase/Migrations/20261116070812_session_store.sql",
+    "backend/supabase/migrations/20261116070812_session_store.sql",
+    "backend/tests/store/schema.sql",
+    "schema.sql",
+]
+NEVER_EXEMPT_DUMPS = [
+    "supabase/migrations/20261116070812_session_store.dump",
+    "supabase/migrations/20261116070812_session_store.backup",
+    "supabase/migrations/20261116070812_session_store.DUMP",
+    "data/session.dump",
+    "data/session.backup",
+    "data/session.Backup",
+]
+SQL_DATA_PLANTS = [
+    ("copy upper", "COPY public.sessions (id, bpm) FROM stdin;\n1\t72\n\\.\n"),
+    ("copy lower", "copy public.sessions from stdin;\n"),
+    ("backslash copy", "\\copy public.sessions from 'rows.csv' csv\n"),
+    ("insert upper", "INSERT INTO public.sessions (bpm) SELECT 72;\n"),
+    ("insert lower", "insert into public.sessions (bpm) select 72;\n"),
+    ("values row list", "select * from (VALUES (1, 72), (2, 75)) as t(id, bpm);\n"),
+    ("values row list lower", "select * from (values\n  (1, 72)) as t(id, bpm);\n"),
+    ("pg_dump header", "--\n-- PostgreSQL database dump\n--\n\n-- Dumped from database version 17.6\n"),
+]
+COMMENT_HIDDEN_PLANTS = [
+    ("insert with an empty block comment", "insert/**/into public.sessions (bpm) select 72;\n"),
+    ("insert with a multi line block comment", "INSERT/* a\n b */INTO public.sessions (bpm) select 72;\n"),
+    ("insert with a line comment", "insert -- x\n into public.sessions (bpm) select 72;\n"),
+    ("values with an empty block comment", "select * from (values/**/(1, 72)) as t(id, bpm);\n"),
+    ("values with a line comment", "select * from (VALUES -- rows\n(1, 72)) as t(id, bpm);\n"),
+]
+SELECT_INTO_AND_CREATE_AS_PLANTS = [
+    ("select into", "select * into public.sessions_copy from public.sessions;\n"),
+    ("select into table upper", "SELECT id, bpm INTO TABLE public.sessions_copy FROM public.sessions;\n"),
+    ("select into across lines", "select id,\n  bpm\ninto public.sessions_copy\nfrom public.sessions;\n"),
+    ("select into behind a comment", "select */**/into public.sessions_copy from public.sessions;\n"),
+    ("create table as", "create table public.sessions_copy as select * from public.sessions;\n"),
+    (
+        "create table if not exists as upper",
+        "CREATE TABLE IF NOT EXISTS public.sessions_copy AS TABLE public.sessions;\n",
+    ),
+    (
+        "create table as with columns",
+        "create table public.sessions_copy (id, bpm) as select id, bpm from public.sessions;\n",
+    ),
+    ("create temp table as", "create temp table sessions_copy as select * from public.sessions;\n"),
+    ("create table as across lines", "create table public.sessions_copy\nas\nselect * from public.sessions;\n"),
+    ("create table as behind a comment", "create table public.sessions_copy/* x */as select * from public.sessions;\n"),
+]
+SCHEMA_COMMENTS = [
+    ("line comment with copy to", "-- copy this to the next migration when the table changes\n"),
+    ("line comment with insert into", "-- the capture tool will insert into public.sessions later\n"),
+    ("line comment with values row", "-- values (1, 72) are examples only\n"),
+    ("block comment with copy from", "/*\n copy rows from the capture tool, never from here\n*/\n"),
+    ("block comment with select into", "/* select bpm into a report elsewhere */\n"),
+    ("block comment with create table as", "/* create table public.x as select 1 is not allowed here */\n"),
+]
+TRIGGER_AFTER_INSERT = (
+    "create function public.touch_session() returns trigger language plpgsql as $$\n"
+    "begin\n"
+    "  new.started_at = now();\n"
+    "  return new;\n"
+    "end\n"
+    "$$;\n"
+    "create trigger sessions_touch after insert on public.sessions\n"
+    "  for each row execute function public.touch_session();\n"
+)
+BEATS_TABLE = (
+    "create table public.beats (\n"
+    "    id bigint generated always as identity primary key,\n"
+    "    session_id bigint not null references public.sessions (id) on delete cascade\n"
+    ");\n"
+)
+SCHEMA_CLAUSES = [
+    (
+        "rls policy for insert",
+        "create policy sessions_insert on public.sessions for insert to authenticated with check (true);\n",
+    ),
+    ("trigger after insert", TRIGGER_AFTER_INSERT),
+    ("view as select", "create view public.session_summary as select id, bpm from public.sessions;\n"),
+    ("second table with an identity column", BEATS_TABLE),
+]
+STRING_HIDDEN_PLANTS = [
+    (
+        "line comment marker inside a string",
+        "comment on table public.sessions is 'a--b'; insert into public.sessions (bpm) select 72;\n",
+    ),
+    (
+        "block comment markers inside strings across lines",
+        (
+            "comment on table public.sessions is 'x/*';\n"
+            "insert into public.sessions (bpm) select 72;\n"
+            "comment on column public.sessions.bpm is '*/';\n"
+        ),
+    ),
+    (
+        "line comment marker inside a quoted identifier",
+        'create table public."a--b" (id bigint primary key); insert into public.sessions (bpm) select 72;\n',
+    ),
+    (
+        "line comment marker inside an escape string",
+        "comment on table public.sessions is E'\\'--'; insert into public.sessions (bpm) select 72;\n",
+    ),
+    (
+        "line comment inside a dollar quoted body",
+        (
+            "create function public.note() returns integer language sql as $$ select 1 -- it's $$; "
+            "insert into public.sessions (bpm) select 72;\n"
+        ),
+    ),
+    (
+        "line comment inside a tagged dollar quoted body",
+        (
+            "create function public.note() returns integer language sql as $fn$ select 1 -- it's $fn$; "
+            "insert into public.sessions (bpm) select 72;\n"
+        ),
+    ),
+]
+DO_BLOCK_PLANTS = [
+    ("execute inside a do block", "do $$ begin execute 'insert into public.sessions (bpm) select 72'; end $$;\n"),
+    (
+        "execute inside a tagged do block",
+        "do $body$\nbegin\n  execute 'insert into public.sessions (bpm) select 72';\nend\n$body$;\n",
+    ),
+]
+TRIGGER_WITH_QUOTES = (
+    "create function public.stamp_session() returns trigger language plpgsql as $$\n"
+    "begin\n"
+    "  -- it's the server clock\n"
+    "  new.started_at = now();\n"
+    "  return new;\n"
+    "end\n"
+    "$$;\n"
+    "-- the capture tool, not this file, will insert into public.sessions\n"
+)
+QUOTED_SCHEMA = [
+    (
+        "comments holding quotes around a data word",
+        "-- the owner's capture tool will insert into public.sessions later\n/* it's never done here */\n",
+    ),
+    ("block comment holding a dollar quote", "/* don't write $$ insert into public.sessions $$ here */\n"),
+    (
+        "rls policy with a string",
+        (
+            "create policy sessions_owner on public.sessions for select to authenticated "
+            "using (current_setting('app.owner', true) = 'yes');\n"
+        ),
+    ),
+    ("trigger function with a dollar body", TRIGGER_WITH_QUOTES),
+    ("identity column", BEATS_TABLE),
+]
+CREATE_AS_EVASIONS = [
+    ("create table with storage options as", "create table private.t with (fillfactor = 70) as select 1 as a;\n"),
+    ("create table using an access method as", "create table private.t using heap as select 1;\n"),
+    ("create table with a quoted name as", 'create table "odd name" as select 1;\n'),
+    ("create table with columns and options as", "create table t (a) with (fillfactor = 70) as select 1;\n"),
+    ("create materialized view as", "create materialized view v as select 1 as a, 2 as b;\n"),
+]
+NOT_CREATE_AS = [
+    ("view as select", "create view public.session_summary as select id, bpm from public.sessions;\n"),
+    ("identity column", BEATS_TABLE),
+    (
+        "generated column",
+        "create table public.readings (\n    bpm real,\n    doubled real generated always as (bpm * 2) stored\n);\n",
+    ),
+    (
+        "function returning a table with a dollar body",
+        (
+            "create function public.recent() returns table (id bigint) language sql "
+            "as $$ select id from public.sessions $$;\n"
+        ),
+    ),
+]
+BIG_SCHEMA = "".join(f"create table public.t_{index} (id bigint primary key);\n" for index in range(2500))
+SLOW_TO_LEX = "".join("$" + "".join(tag) + "$\n" for tag in itertools.product(string.ascii_lowercase, repeat=3))
+NOT_A_MIGRATION = "db/schema.sql"
+SCAN_BOUND_SECONDS = 2.0
 MISSING_HEAD = "0123456789abcdef0123456789abcdef01234567"
 DEPENDABOT_ADDRESS = joined("support", "@", "github.com")
 DEPENDABOT_SIGNOFF = f"Signed-off-by: dependabot[bot] <{DEPENDABOT_ADDRESS}>"
@@ -450,6 +654,163 @@ class DependabotSignoffTests(unittest.TestCase):
         repo = Repo(self)
         repo.commit({NOTES: f"notes\n\n{DEPENDABOT_SIGNOFF}\n"}, "docs: add notes")
         self.assertEqual(found(repo.scan()), {("email", NOTES)})
+
+
+class SqlMigrationTests(unittest.TestCase):
+    def assert_each_plant_is_a_data_file(self, plants):
+        for label, plant in plants:
+            with self.subTest(label=label):
+                repo = Repo(self)
+                repo.commit({MIGRATION: SCHEMA_ONLY + plant}, "feat: add the session schema")
+                self.assertEqual(found(repo.scan()), {("data file", MIGRATION)})
+
+    def assert_each_plant_renamed_in_is_a_data_file(self, plants):
+        for label, plant in plants:
+            with self.subTest(label=label):
+                repo = Repo(self)
+                base = repo.commit({"notes/rows.txt": SCHEMA_ONLY + plant}, "docs: rows")
+                (repo.path / MIGRATION).parent.mkdir(parents=True)
+                repo.git("mv", "notes/rows.txt", MIGRATION)
+                repo.commit({}, "feat: move the rows")
+                self.assertEqual(found(repo.scan(base=base)), {("data file", MIGRATION)})
+
+    def assert_each_clause_stays_schema_only(self, clauses):
+        for label, clause in clauses:
+            with self.subTest(label=label):
+                repo = Repo(self)
+                repo.commit({MIGRATION: SCHEMA_ONLY + clause}, "feat: add the session schema")
+                self.assertEqual(found(repo.scan()), set())
+
+    def assert_edit_is_a_data_file(self, content):
+        repo = Repo(self)
+        base = repo.commit({MIGRATION: SCHEMA_ONLY}, "feat: add the session schema")
+        repo.commit({MIGRATION: content}, "feat: grow the session schema")
+        self.assertEqual(found(repo.scan(base=base)), {("data file", MIGRATION)})
+
+    def test_sql_dump_and_backup_files_are_data_files_anywhere_by_default(self):
+        for name in ("data/session.sql", "data/session.dump", "data/session.backup", "notes/rows.SQL"):
+            with self.subTest(name=name):
+                repo = Repo(self)
+                repo.commit({name: "-- rows\n"}, "data: add a session")
+                self.assertEqual(found(repo.scan()), {("data file", name)})
+
+    def test_schema_only_migration_passes_and_the_same_file_anywhere_else_is_a_data_file(self):
+        cases = [(name, set()) for name in EXEMPT_MIGRATIONS]
+        cases += [(name, {("data file", name)}) for name in NOT_EXEMPT_SQL]
+        for name, expected in cases:
+            with self.subTest(name=name):
+                repo = Repo(self)
+                repo.commit({name: SCHEMA_ONLY}, "feat: add the session schema")
+                self.assertEqual(found(repo.scan()), expected)
+
+    def test_dump_and_backup_are_never_exempt_even_in_the_migrations_folder(self):
+        for name in NEVER_EXEMPT_DUMPS:
+            with self.subTest(name=name):
+                repo = Repo(self)
+                repo.commit({name: SCHEMA_ONLY}, "feat: add the session schema")
+                self.assertEqual(found(repo.scan()), {("data file", name)})
+
+    def test_migration_carrying_rows_or_a_dump_header_is_a_data_file(self):
+        self.assert_each_plant_is_a_data_file(SQL_DATA_PLANTS)
+
+    def test_data_markers_split_by_a_comment_are_a_data_file(self):
+        self.assert_each_plant_is_a_data_file(COMMENT_HIDDEN_PLANTS)
+
+    def test_select_into_and_create_table_as_are_a_data_file(self):
+        self.assert_each_plant_is_a_data_file(SELECT_INTO_AND_CREATE_AS_PLANTS)
+
+    def test_select_into_and_create_table_as_renamed_into_the_migrations_folder_are_a_data_file(self):
+        self.assert_each_plant_renamed_in_is_a_data_file(SELECT_INTO_AND_CREATE_AS_PLANTS)
+
+    def test_comment_markers_inside_strings_identifiers_or_dollar_bodies_do_not_hide_data(self):
+        self.assert_each_plant_is_a_data_file(STRING_HIDDEN_PLANTS)
+
+    def test_data_inside_a_dollar_quoted_do_block_is_a_data_file(self):
+        self.assert_each_plant_is_a_data_file(DO_BLOCK_PLANTS)
+
+    def test_create_as_with_options_quoted_names_or_a_materialized_view_is_a_data_file(self):
+        self.assert_each_plant_is_a_data_file(CREATE_AS_EVASIONS)
+
+    def test_comments_naming_data_words_leave_a_schema_only_migration_exempt(self):
+        for label, comment in SCHEMA_COMMENTS:
+            for name, expected in ((MIGRATION, set()), (NOT_A_MIGRATION, {("data file", NOT_A_MIGRATION)})):
+                with self.subTest(label=label, name=name):
+                    repo = Repo(self)
+                    repo.commit({name: SCHEMA_ONLY + comment}, "feat: add the session schema")
+                    self.assertEqual(found(repo.scan()), expected)
+
+    def test_insert_policies_triggers_views_and_identity_columns_stay_schema_only(self):
+        self.assert_each_clause_stays_schema_only(SCHEMA_CLAUSES)
+
+    def test_quotes_in_comments_policies_dollar_bodies_and_identity_columns_stay_schema_only(self):
+        self.assert_each_clause_stays_schema_only(QUOTED_SCHEMA)
+
+    def test_views_identity_and_generated_columns_and_table_functions_are_not_create_as(self):
+        self.assert_each_clause_stays_schema_only(NOT_CREATE_AS)
+
+    def test_rows_added_to_an_existing_migration_are_a_data_file(self):
+        self.assert_edit_is_a_data_file(SCHEMA_ONLY + "INSERT INTO public.sessions (bpm) SELECT 72;\n")
+
+    def test_data_bearing_file_renamed_into_the_migrations_folder_is_a_data_file(self):
+        self.assert_each_plant_renamed_in_is_a_data_file(SQL_DATA_PLANTS)
+
+    def test_exemption_removes_only_the_data_file_kind_and_content_checks_stay_on(self):
+        plants = [
+            ("path", joined("/Us", "ers/zed/notes.txt")),
+            ("private IP", PRIVATE_IP),
+            ("email", UNKNOWN_EMAIL),
+            ("key", AWS_KEY),
+        ]
+        for kind, text in plants:
+            for name, extra in ((MIGRATION, set()), (NOT_A_MIGRATION, {"data file"})):
+                with self.subTest(kind=kind, name=name):
+                    repo = Repo(self)
+                    repo.commit({name: f"{SCHEMA_ONLY}-- seen {text} here\n"}, "feat: add the session schema")
+                    expected = {(kind, name)} | {(other, name) for other in extra}
+                    self.assertEqual(found(repo.scan()), expected)
+
+    def test_exempt_migration_with_a_nul_byte_is_still_a_binary_file(self):
+        for name, expected in ((MIGRATION, {"binary file"}), (NOT_A_MIGRATION, {"binary file", "data file"})):
+            with self.subTest(name=name):
+                repo = Repo(self)
+                repo.commit({name: SCHEMA_ONLY.encode() + b"\x00\n"}, "feat: add the session schema")
+                self.assertEqual(found(repo.scan()), {(kind, name) for kind in expected})
+
+    def test_new_migration_over_the_size_limit_is_never_exempt_and_matches_any_other_sql_file(self):
+        self.assertGreater(len(BIG_SCHEMA), privacy_scan.SIZE_LIMIT_BYTES)
+        kinds = {}
+        for name in (MIGRATION, NOT_A_MIGRATION):
+            with self.subTest(name=name):
+                repo = Repo(self)
+                repo.commit({name: BIG_SCHEMA}, "feat: add the session schema")
+                findings = found(repo.scan())
+                kinds[name] = {kind for kind, _ in findings}
+                self.assertEqual({path for _, path in findings}, {name})
+                self.assertIn("data file", kinds[name])
+                self.assertLessEqual(kinds[name], {"data file", "large file"})
+        self.assertEqual(kinds.get(MIGRATION), kinds.get(NOT_A_MIGRATION))
+
+    def test_modified_migration_over_the_size_limit_is_a_data_file(self):
+        self.assertGreater(len(BIG_SCHEMA), privacy_scan.SIZE_LIMIT_BYTES)
+        self.assert_edit_is_a_data_file(BIG_SCHEMA)
+
+    def assert_slow_to_lex_edit_is_a_quick_data_file(self, name):
+        self.assertGreater(len(SLOW_TO_LEX), privacy_scan.SIZE_LIMIT_BYTES)
+        self.assertLess(len(SLOW_TO_LEX), privacy_scan.SIZE_LIMIT_BYTES * 1.1)
+        repo = Repo(self)
+        base = repo.commit({name: SCHEMA_ONLY}, "feat: add the session schema")
+        repo.commit({name: SLOW_TO_LEX}, "feat: grow the session schema")
+        start = time.monotonic()
+        findings = repo.scan(base=base)
+        elapsed = time.monotonic() - start
+        self.assertEqual(found(findings), {("data file", name)})
+        self.assertLess(elapsed, SCAN_BOUND_SECONDS)
+
+    def test_migration_over_the_size_limit_that_is_slow_to_lex_is_a_data_file_quickly(self):
+        self.assert_slow_to_lex_edit_is_a_quick_data_file(MIGRATION)
+
+    def test_sql_file_outside_the_migrations_folder_that_is_slow_to_lex_is_a_data_file_quickly(self):
+        self.assert_slow_to_lex_edit_is_a_quick_data_file(NOT_A_MIGRATION)
 
 
 class CommandLineTests(unittest.TestCase):
