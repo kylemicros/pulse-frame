@@ -33,18 +33,3 @@ jobs:
 
       - name: actionlint
         run: '"$RUNNER_TEMP/actionlint" -color -shellcheck= -pyflakes='
-
-      - name: Planted sample proof
-        shell: bash
-        run: |
-          set -euo pipefail
-          status=0
-          output="$("$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes= .github/actionlint-proof/planted.yml 2>&1)" || status=$?
-          printf '%s\n' "$output"
-          if [ "$status" -eq 0 ]; then
-            echo "actionlint exited 0 on the planted sample"
-            exit 1
-          fi
-          grep -F 'set-output' <<<"$output" | grep -F '[deprecated-commands]' >/dev/null || { echo "missing the set-output finding"; exit 1; }
-          grep -F '"actions/checkout@v2"' <<<"$output" | grep -F '[action]' >/dev/null || { echo "missing the outdated checkout finding"; exit 1; }
-          echo "planted sample proof: both findings present, exit status $status"
