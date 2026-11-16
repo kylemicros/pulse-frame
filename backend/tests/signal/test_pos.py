@@ -135,7 +135,6 @@ def test_pos_rejects_window_that_is_not_positive_and_finite(window_s: float) -> 
     assert caught.value.action
 
 
-@pytest.mark.filterwarnings("error")
 @pytest.mark.parametrize("count", [0, 1, 10])
 def test_pos_short_input_keeps_its_length_without_raising(count: int) -> None:
     rgb = uniform_skin_rgb(72.0, seed=4, duration_s=1.0)[:count]

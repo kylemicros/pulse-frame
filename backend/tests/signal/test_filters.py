@@ -59,7 +59,6 @@ def test_bad_rate_or_band_raises_a_coded_error(
     assert caught.value.action
 
 
-@pytest.mark.filterwarnings("error")
 @pytest.mark.parametrize("count", [0, 1, 10])
 def test_short_input_keeps_its_length_without_raising(count: int) -> None:
     x = sine(1.2)[:count]

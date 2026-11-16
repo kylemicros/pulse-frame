@@ -67,5 +67,8 @@ jobs:
       - name: Format check
         run: uv run ruff format --check
 
+      - name: Deprecated usage
+        run: uv run ty check
+
       - name: Tests
         run: uv run pytest
