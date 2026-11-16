@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import privacy_scan
 
@@ -342,10 +343,205 @@ SIGNOFF_ELSEWHERE = [
 ]
 
 
+ALLOWED_HOSTS_FILE = REPO_ROOT / ".github" / "allowed-hosts.txt"
+UNTRUSTED_HOST = "untrusted host"
+GITHUB = "github.com"
+PYPI = "pypi.org"
+MIRROR_LIKE = joined("github-com.", "lookalike.", "cloudns.ch")
+RAW_MIRROR_LIKE = joined("raw-githubusercontent-com.", "lookalike.", "cloudns.ch")
+SUBSTITUTES = "qxz7"
+
+
+def url(host, rest="/owner/repo"):
+    return joined("https", "://", host, rest)
+
+
+def remote(host):
+    return joined("git", "@", host, ":owner/repo.git")
+
+
+HTTPS_LOOKALIKES = [
+    ("github lookalike under cloudns", url(MIRROR_LIKE)),
+    ("raw content lookalike under cloudns", url(RAW_MIRROR_LIKE, "/owner/repo/master/README.md")),
+    ("listed host as the prefix of another domain", url(joined(GITHUB, ".lookalike.invalid"))),
+    ("one character off", url(joined("githu", "h.com"))),
+    ("upper case", url(GITHUB.upper())),
+    ("mixed case", url(joined("Git", "Hub.com"))),
+    ("trailing dot", url(joined(GITHUB, "."))),
+    ("listed host as a path", url("lookalike.invalid", joined("/", GITHUB, "/owner/repo"))),
+    ("no path", url(MIRROR_LIKE, "")),
+    ("with a port", url(MIRROR_LIKE, ":443/owner/repo")),
+    ("http scheme", joined("http", "://", MIRROR_LIKE, "/owner/repo")),
+    ("in a markdown link", joined("[repo](", url(MIRROR_LIKE), ")")),
+    ("in quotes", joined('"', url(MIRROR_LIKE), '"')),
+    ("in angle brackets", joined("<", url(MIRROR_LIKE), ">")),
+]
+AT_SIGN_LOOKALIKES = [
+    ("listed host as user info", url(joined(GITHUB, "@", "lookalike.invalid"))),
+    ("cloudns remote", remote(MIRROR_LIKE)),
+    ("one character off remote", remote(joined("githu", "h.com"))),
+    ("upper case remote", remote(GITHUB.upper())),
+    ("trailing dot remote", remote(joined(GITHUB, "."))),
+    ("listed host as the prefix of another domain remote", remote(joined(GITHUB, ".lookalike.invalid"))),
+    ("ssh scheme with user", joined("ssh", "://", "git", "@", MIRROR_LIKE, "/owner/repo.git")),
+]
+EVIL = joined("evil", ".invalid")
+LIST_PATH = ".github/allowed-hosts.txt"
+START_ONLY = joined("mirror", ".start-only", ".invalid")
+EXEMPT_HOSTS = frozenset({"localhost", "host", "postgres"})
+SPECIAL_SCHEMES = ["http", "https", "ws", "wss", "ftp"]
+STRICT_HOST_PLANTS = [
+    ("backslash-before-at", joined("https", "://", EVIL, "\\", "@", GITHUB, "/x")),
+    ("backslash-before-example", joined("https", "://", EVIL, "\\", ".example", "/x")),
+    ("percent-encoded-dot", joined("https", "://", "evil", "%2E", "invalid", "/x")),
+    ("ideographic-full-stop", joined("https", "://", "evil", "\u3002", "invalid", "/x")),
+    ("fullwidth-full-stop", joined("https", "://", "evil", "\uff0e", "invalid", "/x")),
+    ("decimal-ipv4", joined("http", "://", "16843009", "/x")),
+    ("hex-ipv4", joined("http", "://", "0x", "01010101", "/x")),
+    ("bracketed-ipv6", joined("https", "://", "[2001", ":db8::1]", "/x")),
+    ("tab-inside-the-host", joined("https", "://", "evil", "\t", ".invalid", "/x")),
+    ("shell-variable", joined("https", "://", "${", "MIRROR}", "/x")),
+    ("listed-host-then-quote", joined("https", "://", GITHUB, "'", ".", EVIL, "/x")),
+    ("listed-host-then-parenthesis", joined("https", "://", GITHUB, "(", ".", EVIL, "/x")),
+]
+DOTLESS_PLANTS = [
+    ("single-label", joined("https", "://", "intra", "net", "/x")),
+    ("near-an-exempt-name", joined("https", "://", "postgres", "ql", "/x")),
+    ("single-label-with-a-port", joined("http", "://", "intra", "net", ":8080/x")),
+    ("single-label-remote", remote(joined("intra", "net"))),
+]
+EMPTY_HOST_PLANTS = [(f"{scheme}-three-slashes", joined(scheme, ":", "///", EVIL, "/x")) for scheme in SPECIAL_SCHEMES] + [
+    ("https-four-slashes", joined("https", ":", "////", EVIL, "/x")),
+]
+SPECIAL_SCHEME_PLANTS = [
+    plant
+    for scheme in SPECIAL_SCHEMES
+    for plant in (
+        (f"{scheme}-no-slashes", joined(scheme, ":", EVIL, "/x")),
+        (f"{scheme}-two-backslashes", joined(scheme, ":", "\\\\", EVIL, "/x")),
+        (f"{scheme}-slash-then-backslash", joined(scheme, ":", "/", "\\", EVIL, "/x")),
+    )
+] + [("upper-case-https-no-slashes", joined("HTTPS", ":", EVIL, "/x"))]
+LOOPBACK = joined("127.0", ".0.1")
+ANGLE_PLANTS = [
+    ("listed-host-then-angle-at", joined("https", "://", GITHUB, "<", "@", EVIL, "/x")),
+    ("listed-host-then-angle-user-at", joined("https", "://", GITHUB, "<", "x", "@", EVIL, "/x")),
+    ("listed-host-port-then-angle-at", joined("https", "://", GITHUB, ":443", "<", "@", EVIL, "/x")),
+    ("loopback-then-angle-at", joined("http", "://", LOOPBACK, "<", "@", EVIL, "/x")),
+    ("listed-host-then-angle-dot", joined("https", "://", GITHUB, "<", ".", EVIL, "/x")),
+]
+WHITESPACE_PLANTS = [
+    ("listed-host-tab-dot", joined(url(GITHUB, ""), "\t", ".", EVIL, "/x")),
+    ("listed-host-tab-at", joined(url(GITHUB, ""), "\t", "@", EVIL, "/x")),
+    ("tab-inside-the-slashes", joined("https", ":", "\t", "//", EVIL, "/x")),
+    ("tab-before-the-colon", joined("https", "\t", "://", EVIL, "/x")),
+    ("listed-host-carriage-return-dot", joined(url(GITHUB, ""), "\r", ".", EVIL, "/x")),
+    ("listed-host-space-at", joined(url(GITHUB, ""), " ", "@", EVIL, "/x")),
+    ("listed-host-space-user-at", joined(url(GITHUB, ""), " ", "x", "@", EVIL, "/x")),
+]
+SPACE_RUN_PLANTS = [
+    ("listed-url-space-quote-at", joined(url(GITHUB, ""), " ", '"', "@", EVIL, "/x")),
+    ("single-quoted-href-space-quote-at", joined("href='", url(GITHUB, ""), " ", '"', "@", EVIL, "/x'")),
+    ("markdown-angle-space-quote-at", joined("[x](<", url(GITHUB, ""), " ", '"', "@", EVIL, "/x>)")),
+    ("double-quoted-href-space-angle-at", joined('href="', url(GITHUB, ""), " ", ">", "@", EVIL, '/x"')),
+    ("markdown-angle-space-backslash-angle-at", joined("[x](<", url(GITHUB, ""), " ", "\\", ">", "@", EVIL, "/x>)")),
+    ("markdown-angle-space-backslash-at", joined("[x](<", url(GITHUB, ""), " ", "\\", "@", EVIL, "/x>)")),
+    ("listed-url-quote-at", joined(url(GITHUB, ""), '"', "@", EVIL, "/x")),
+    ("listed-url-angle-at", joined(url(GITHUB, ""), ">", "@", EVIL, "/x")),
+    ("listed-url-backslash-at", joined(url(GITHUB, ""), "\\", "@", EVIL, "/x")),
+]
+MULTI_WORD_RUN_PLANTS = [
+    ("listed-url-space-words-at", joined(url(GITHUB, ""), " x y", "@", EVIL, "/x")),
+]
+LONG_PLAIN_LINE = "a" * 100_000
+LONG_TRAILER_LINE = joined("https", "://", ")" * 100_000, "x")
+SECOND_COLON_PLANTS = [
+    ("allowed-origins-list", joined("ALLOWED_ORIGINS=", "http", "://", "localhost", ":5173", ",", "https", "://", EVIL)),
+    ("json-origin-array", joined('["', "http", "://", "localhost", ":5173", '","', "https", "://", EVIL, '/x"]')),
+    ("listed-port-comma-url", joined("https", "://", GITHUB, ":443", ",", "https", "://", EVIL, "/x")),
+    ("listed-port-semicolon-url", joined("https", "://", GITHUB, ":443", ";", "https", "://", EVIL, "/x")),
+    ("space-between-urls", joined("http", "://", "localhost", ":5173", " ", "https", "://", EVIL)),
+]
+PORT_PLACEHOLDER_PASSES = [
+    ("loopback-port-placeholder", joined('f"', "ws", "://", LOOPBACK, ":{port}{path}", '"')),
+    ("user-at-loopback-port-placeholder", joined("postgresql", "://", "user", "@", LOOPBACK, ":port")),
+    ("user-at-host-port-placeholder", joined("postgresql", "://", "user", "@", "host", ":port")),
+]
+SPECIAL_SCHEME_EXEMPT_PLANTS = [
+    (f"{name}-on-{scheme}", joined(scheme, "://", name, "/x")) for name in ("host", "postgres") for scheme in SPECIAL_SCHEMES
+]
+TRAILER_PLANTS = [
+    ("evil-host-then-quote-comma", joined('"', url(EVIL, ""), '",')),
+]
+DEPARTURE_PASSES = [
+    ("placeholder-authority", joined("pg-functions", "://", "<database>", "/x")),
+    ("listed-host-then-closing-tag", joined(url(GITHUB, ""), "</a>")),
+    ("listed-path-then-tag", joined(url(GITHUB, "/x"), "<br>")),
+    ("listed-url-then-prose", joined(url(GITHUB, "/x"), " and more prose")),
+    ("listed-host-then-prose", joined(url(GITHUB, ""), " is where the code lives")),
+    ("listed-host-in-quotes-then-comma", joined('"', url(GITHUB, ""), '",')),
+    ("listed-host-in-parentheses-then-semicolon", joined("(", url(GITHUB, ""), ");")),
+    ("yaml-ws-key", joined("    ", "ws", ":", " true")),
+    ("scheme-alone-in-parentheses", joined("(", "https", ":", ")")),
+    ("postgres-user-at-localhost", joined("postgresql", "://", "postgres", "@", "localhost")),
+    ("postgres-on-pg-functions", joined("pg-functions", "://", "postgres", "/x")),
+] + [(f"localhost-on-{scheme}", joined(scheme, "://", "localhost", ":5173/x")) for scheme in SPECIAL_SCHEMES]
+RESERVED_SUFFIX_PLANTS = [
+    ("listed-host-then-example-then-more", url(joined(GITHUB, ".example", ".invalid"))),
+    ("example-dot-com", url(joined("example", ".", "com"))),
+]
+PASSING_HOSTS = [
+    ("localhost", joined("http", "://", "localhost", ":5173/x")),
+    ("host", joined("postgresql", "://", "user", ":", "pw", "@", "host", ":5432/db")),
+    ("postgres", joined("pg-functions", "://", "postgres")),
+    ("file-with-an-empty-host", joined("file", ":", "///", "tmp/x")),
+    ("markdown-link", joined("[repo](", url(GITHUB, "/x"), ")")),
+    ("markdown-link-without-a-path", joined("[repo](", url(GITHUB, ""), ")")),
+    ("double-quotes", joined('"', url(GITHUB, ""), '"')),
+    ("single-quotes", joined("'", url(GITHUB, ""), "'")),
+    ("backticks", joined("`", url(GITHUB, ""), "`")),
+    ("angle-brackets", joined("<", url(GITHUB, ""), ">")),
+    ("listed-host-then-example", url(joined(GITHUB, ".example"))),
+    ("name-under-example", url(joined("x", ".example"))),
+]
+
+
+def listed_hosts(case):
+    case.assertTrue(ALLOWED_HOSTS_FILE.is_file(), f"{ALLOWED_HOSTS_FILE.name} is missing from .github")
+    return ALLOWED_HOSTS_FILE.read_bytes().decode("ascii").splitlines()
+
+
+def one_character_off(host, listed):
+    for index, character in enumerate(host):
+        if character.isalnum():
+            for substitute in SUBSTITUTES:
+                candidate = joined(host[:index], substitute, host[index + 1 :])
+                if substitute != character and candidate not in listed:
+                    return candidate
+    raise AssertionError(f"no one character variant of {host} is off the list")
+
+
+def lookalikes_of(host, listed):
+    variants = [
+        one_character_off(host, listed),
+        joined(host, ".lookalike.invalid"),
+        joined("zz-unlisted.", host),
+        joined(host, "."),
+    ]
+    if host.upper() != host:
+        variants.append(host.upper())
+    return [variant for variant in variants if variant not in listed]
+
+
+def temp_folder(case):
+    folder = Path(tempfile.mkdtemp(prefix="privacyscan-"))
+    case.addCleanup(shutil.rmtree, folder, True)
+    return folder
+
+
 class Repo:
     def __init__(self, case):
-        self.root = Path(tempfile.mkdtemp(prefix="privacyscan-"))
-        case.addCleanup(shutil.rmtree, self.root, True)
+        self.root = temp_folder(case)
         home = self.root / "home"
         home.mkdir()
         self.env = {
@@ -635,6 +831,271 @@ class AllowlistTests(unittest.TestCase):
             committer=WEB_MERGE,
         )
         self.assertEqual(repo.scan(), [])
+
+
+class UntrustedHostTests(unittest.TestCase):
+    def test_named_lookalike_urls_in_an_added_line_are_untrusted_hosts(self):
+        for label, text in HTTPS_LOOKALIKES:
+            with self.subTest(label=label):
+                repo = Repo(self)
+                repo.commit({NOTES: f"see {text} now\n"}, "docs: add notes")
+                self.assertEqual(found(repo.scan()), {(UNTRUSTED_HOST, NOTES)})
+
+    def test_lookalike_git_remotes_and_user_info_urls_in_an_added_line_are_untrusted_hosts(self):
+        for label, text in AT_SIGN_LOOKALIKES:
+            with self.subTest(label=label):
+                repo = Repo(self)
+                repo.commit({NOTES: f"remote {text}\n"}, "docs: add notes")
+                self.assertIn((UNTRUSTED_HOST, NOTES), found(repo.scan()))
+
+    def test_lookalikes_of_every_listed_host_are_untrusted_hosts(self):
+        listed = set(listed_hosts(self))
+        files = {}
+        for host in sorted(listed):
+            for variant in lookalikes_of(host, listed):
+                files[f"hosts/{len(files)}.txt"] = f"see {url(variant)} now\n"
+        self.assertGreaterEqual(len(files), 4 * len(listed))
+        repo = Repo(self)
+        repo.commit(files, "docs: add hosts")
+        self.assertEqual(found(repo.scan()), {(UNTRUSTED_HOST, name) for name in files})
+
+    def test_every_listed_host_passes_with_ports_paths_queries_and_fragments(self):
+        listed = listed_hosts(self)
+        self.assertIn(GITHUB, listed)
+        self.assertIn(PYPI, listed)
+        files = {
+            f"hosts/{index}.txt": f"see {url(host)} and {url(host, ':443/a/b?c=1#d')} now\n"
+            for index, host in enumerate(listed)
+        }
+        repo = Repo(self)
+        repo.commit(files, "docs: add hosts")
+        self.assertEqual(repo.scan(), [])
+
+    def test_github_and_pypi_urls_pass_and_the_github_remote_is_not_an_untrusted_host(self):
+        repo = Repo(self)
+        repo.commit({NOTES: f"see {url(GITHUB)} and {url(PYPI, '/simple/numpy/')}\n"}, "docs: add notes")
+        self.assertEqual(repo.scan(), [])
+        repo = Repo(self)
+        repo.commit({NOTES: f"remote {remote(GITHUB)}\n"}, "docs: add notes")
+        self.assertNotIn(UNTRUSTED_HOST, {finding.kind for finding in repo.scan()})
+
+    def test_lookalike_removed_inside_the_range_passes(self):
+        repo = Repo(self)
+        base = repo.commit({NOTES: f"see {url(MIRROR_LIKE)} now\n"}, "docs: add notes")
+        repo.commit({NOTES: f"see {url(GITHUB)} now\n"}, "docs: fix the host")
+        self.assertEqual(repo.scan(base=base), [])
+
+    def test_untrusted_host_prints_kind_and_file_without_the_host_and_fails(self):
+        for text in (url(MIRROR_LIKE), remote(MIRROR_LIKE)):
+            with self.subTest(text=text):
+                repo = Repo(self)
+                head = repo.commit({NOTES: f"see {text} now\n"}, "docs: add notes")
+                code, output = repo.cli(repo.base, head)
+                self.assertEqual(code, 1)
+                self.assertIn(f"{UNTRUSTED_HOST}: {NOTES}", output)
+                self.assertNotIn(MIRROR_LIKE, output)
+
+    def test_lookalike_url_in_a_commit_message_is_found_with_the_commit_and_never_printed(self):
+        repo = Repo(self)
+        head = repo.commit({NOTES: "plain notes\n"}, f"docs: notes from {url(MIRROR_LIKE)}")
+        self.assertEqual(found(repo.scan()), {(UNTRUSTED_HOST, f"commit {head[:7]} message")})
+        code, output = repo.cli(repo.base, head)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{UNTRUSTED_HOST}: commit {head[:7]} message", output)
+        self.assertNotIn(MIRROR_LIKE, output)
+
+    def test_listed_host_url_in_a_commit_message_passes(self):
+        repo = Repo(self)
+        head = repo.commit({NOTES: "plain notes\n"}, f"docs: notes from {url(GITHUB)} and {url(PYPI, '/simple/')}")
+        self.assertEqual(repo.scan(), [])
+        self.assertEqual(repo.cli(repo.base, head)[0], 0)
+
+    def test_allowed_hosts_file_loads_as_its_lines(self):
+        listed = listed_hosts(self)
+        self.assertEqual(Path(privacy_scan.ALLOWED_HOSTS_FILE).resolve(), ALLOWED_HOSTS_FILE)
+        self.assertEqual(set(privacy_scan.load_allowed_hosts(privacy_scan.ALLOWED_HOSTS_FILE)), set(listed))
+
+    def test_missing_allowed_hosts_file_is_a_scan_error(self):
+        missing = temp_folder(self) / "allowed-hosts.txt"
+        with self.assertRaises(privacy_scan.ScanError):
+            privacy_scan.load_allowed_hosts(missing)
+
+
+def plant_files(plants):
+    return {f"hosts/{label}.txt": f"see {text} now\n" for label, text in plants}
+
+
+class StrictHostTests(unittest.TestCase):
+    def assert_each_plant_is_an_untrusted_host(self, plants):
+        files = plant_files(plants)
+        repo = Repo(self)
+        repo.commit(files, "docs: add hosts")
+        self.assertEqual(found(repo.scan()), {(UNTRUSTED_HOST, name) for name in files})
+
+    def assert_each_plant_has_an_untrusted_host(self, plants):
+        files = plant_files(plants)
+        repo = Repo(self)
+        repo.commit(files, "docs: add hosts")
+        untrusted = {path for kind, path in found(repo.scan()) if kind == UNTRUSTED_HOST}
+        self.assertEqual(untrusted, set(files))
+
+    def test_angle_bracket_after_the_host_does_not_end_the_authority(self):
+        self.assert_each_plant_has_an_untrusted_host(ANGLE_PLANTS)
+
+    def test_tab_and_carriage_return_are_removed_and_a_space_before_an_at_sign_is_untrusted(self):
+        self.assert_each_plant_has_an_untrusted_host(WHITESPACE_PLANTS)
+
+    def test_space_then_at_sign_run_is_not_stopped_by_quotes_angles_or_backslashes(self):
+        self.assert_each_plant_is_an_untrusted_host(SPACE_RUN_PLANTS)
+        self.assert_each_plant_has_an_untrusted_host(MULTI_WORD_RUN_PLANTS)
+
+    def timed_host_findings(self, line):
+        start = time.perf_counter()
+        findings = privacy_scan.host_findings(line, NOTES, frozenset({GITHUB}))
+        return findings, time.perf_counter() - start
+
+    def test_one_hundred_kilobyte_plain_line_is_scanned_for_hosts_quickly(self):
+        findings, elapsed = self.timed_host_findings(LONG_PLAIN_LINE)
+        self.assertEqual(findings, [])
+        self.assertLess(elapsed, SCAN_BOUND_SECONDS)
+
+    def test_url_with_one_hundred_thousand_closing_parentheses_is_scanned_quickly(self):
+        findings, elapsed = self.timed_host_findings(LONG_TRAILER_LINE)
+        self.assertEqual(found(findings), {(UNTRUSTED_HOST, NOTES)})
+        self.assertLess(elapsed, SCAN_BOUND_SECONDS)
+
+    def test_second_colon_in_the_host_and_port_is_an_untrusted_host(self):
+        self.assert_each_plant_is_an_untrusted_host(SECOND_COLON_PLANTS)
+
+    def test_port_placeholders_after_a_trusted_host_pass(self):
+        repo = Repo(self)
+        repo.commit(plant_files(PORT_PLACEHOLDER_PASSES), "docs: add hosts")
+        self.assertEqual(found(repo.scan()), set())
+
+    def test_host_and_postgres_on_a_special_scheme_are_untrusted_hosts(self):
+        self.assert_each_plant_is_an_untrusted_host(SPECIAL_SCHEME_EXEMPT_PLANTS)
+
+    def test_untrusted_host_before_trimmed_quote_and_comma_is_an_untrusted_host(self):
+        self.assert_each_plant_is_an_untrusted_host(TRAILER_PLANTS)
+
+    def test_placeholders_tags_prose_trailers_yaml_keys_and_exempt_names_pass(self):
+        repo = Repo(self)
+        repo.commit(plant_files(DEPARTURE_PASSES), "docs: add hosts")
+        self.assertEqual(found(repo.scan()), set())
+
+    def test_hosts_outside_lower_case_letters_digits_dots_and_hyphens_are_untrusted_hosts(self):
+        self.assert_each_plant_is_an_untrusted_host(STRICT_HOST_PLANTS)
+
+    def test_dotless_hosts_outside_the_exempt_set_are_untrusted_hosts(self):
+        self.assert_each_plant_is_an_untrusted_host(DOTLESS_PLANTS)
+
+    def test_empty_host_on_a_special_scheme_is_an_untrusted_host(self):
+        self.assert_each_plant_is_an_untrusted_host(EMPTY_HOST_PLANTS)
+
+    def test_special_scheme_without_two_slashes_or_with_a_backslash_is_an_untrusted_host(self):
+        self.assert_each_plant_is_an_untrusted_host(SPECIAL_SCHEME_PLANTS)
+
+    def test_reserved_suffix_inside_the_host_or_example_dot_com_is_an_untrusted_host(self):
+        self.assert_each_plant_is_an_untrusted_host(RESERVED_SUFFIX_PLANTS)
+
+    def test_exempt_set_is_exactly_localhost_host_and_postgres(self):
+        self.assertEqual(privacy_scan.EXEMPT_HOSTS, EXEMPT_HOSTS)
+        self.assertEqual({host for host in EXEMPT_HOSTS if not privacy_scan.host_exempt(host)}, set())
+
+    def test_exempt_names_reserved_suffix_file_urls_and_wrapped_listed_hosts_pass(self):
+        repo = Repo(self)
+        repo.commit(plant_files(PASSING_HOSTS), "docs: add hosts")
+        self.assertEqual(found(repo.scan()), set())
+
+    def test_listed_host_after_user_info_is_not_an_untrusted_host(self):
+        repo = Repo(self)
+        repo.commit({NOTES: f"see {url(joined('user', '@', GITHUB))} now\n"}, "docs: add notes")
+        self.assertNotIn(UNTRUSTED_HOST, {finding.kind for finding in repo.scan()})
+
+
+class StartCommitHostListTests(unittest.TestCase):
+    def repo_with_list(self, hosts):
+        repo = Repo(self)
+        base = repo.commit({LIST_PATH: "".join(f"{host}\n" for host in hosts)}, "chore: list hosts")
+        return repo, base
+
+    def missing_tree_list(self):
+        missing = temp_folder(self) / "allowed-hosts.txt"
+        self.enterContext(mock.patch.object(privacy_scan, "ALLOWED_HOSTS_FILE", missing))
+
+    def test_host_added_to_the_list_and_used_in_the_same_range_is_an_untrusted_host(self):
+        repo, base = self.repo_with_list([GITHUB])
+        repo.commit({LIST_PATH: f"{GITHUB}\n{PYPI}\n", NOTES: f"see {url(PYPI)} now\n"}, "docs: add notes")
+        self.assertEqual(found(repo.scan(base=base)), {(UNTRUSTED_HOST, NOTES)})
+
+    def test_host_listed_only_at_the_start_commit_passes(self):
+        repo, base = self.repo_with_list([GITHUB, START_ONLY])
+        repo.commit({NOTES: f"see {url(START_ONLY)} and {url(GITHUB)} now\n"}, "docs: add notes")
+        self.assertEqual(repo.scan(base=base), [])
+
+    def test_start_commit_without_a_list_uses_the_tree_list(self):
+        repo = Repo(self)
+        repo.commit({LIST_PATH: f"{START_ONLY}\n", NOTES: f"see {url(START_ONLY)} now\n"}, "chore: list hosts")
+        self.assertEqual(found(repo.scan()), {(UNTRUSTED_HOST, NOTES)})
+        repo = Repo(self)
+        repo.commit({LIST_PATH: f"{START_ONLY}\n", NOTES: f"see {url(GITHUB)} now\n"}, "chore: list hosts")
+        self.assertEqual(repo.scan(), [])
+
+    def test_allowed_hosts_at_reads_the_start_commit_list_or_falls_back_to_the_tree(self):
+        repo, base = self.repo_with_list([GITHUB, START_ONLY])
+        git = privacy_scan.Git(str(repo.path))
+        self.assertEqual(privacy_scan.allowed_hosts_at(git, base), frozenset({GITHUB, START_ONLY}))
+        tree = privacy_scan.load_allowed_hosts(privacy_scan.ALLOWED_HOSTS_FILE)
+        self.assertEqual(privacy_scan.allowed_hosts_at(git, repo.base), tree)
+
+    def test_list_at_the_start_commit_scans_without_a_tree_list(self):
+        self.missing_tree_list()
+        repo, base = self.repo_with_list([GITHUB])
+        head = repo.commit({NOTES: f"see {url(GITHUB)} now\n"}, "docs: add notes")
+        self.assertEqual(repo.cli(base, head)[0], 0)
+
+    def test_no_list_at_the_start_commit_or_in_the_tree_fails_closed_with_could_not_run(self):
+        self.missing_tree_list()
+        repo = Repo(self)
+        head = repo.commit({NOTES: f"see {url(GITHUB)} now\n"}, "docs: add notes")
+        code, output = repo.cli(repo.base, head)
+        self.assertEqual(code, 2)
+        self.assertIn("could not run", output)
+
+    def test_non_ascii_line_in_the_start_commit_list_is_a_scan_error(self):
+        repo, base = self.repo_with_list([GITHUB, joined("caf", "\u00e9", ".invalid")])
+        head = repo.commit({NOTES: f"see {url(GITHUB)} now\n"}, "docs: add notes")
+        with self.assertRaises(privacy_scan.ScanError):
+            repo.scan(base=base)
+        code, output = repo.cli(base, head)
+        self.assertEqual(code, 2)
+        self.assertIn("could not run", output)
+
+    def test_git_failure_reading_the_start_commit_list_fails_closed_with_could_not_run(self):
+        repo, base = self.repo_with_list([GITHUB])
+        head = repo.commit({NOTES: f"see {url(GITHUB)} now\n"}, "docs: add notes")
+        folder = repo.git("rev-parse", f"{base}:.github")
+        loose = repo.path / ".git" / "objects" / folder[:2] / folder[2:]
+        self.assertTrue(loose.is_file())
+        loose.unlink()
+        code, output = repo.cli(base, head)
+        self.assertEqual(code, 2)
+        self.assertIn("could not run", output)
+
+    def test_list_lines_outside_the_host_form_trust_nothing(self):
+        repo, base = self.repo_with_list([GITHUB, "", joined("Git", "Hub.com")])
+        files = {
+            "hosts/empty-host.txt": f"see {joined('https', ':', '///', EVIL, '/x')} now\n",
+            "hosts/upper-case-host.txt": f"see {url(joined('Git', 'Hub.com'))} now\n",
+        }
+        repo.commit(files, "docs: add hosts")
+        self.assertEqual(found(repo.scan(base=base)), {(UNTRUSTED_HOST, name) for name in files})
+
+    def test_non_ascii_line_in_the_tree_list_is_a_scan_error(self):
+        listed = temp_folder(self) / "allowed-hosts.txt"
+        listed.write_bytes(joined(GITHUB, "\n", "caf", "\u00e9", ".invalid", "\n").encode())
+        with self.assertRaises(privacy_scan.ScanError):
+            privacy_scan.load_allowed_hosts(listed)
 
 
 class DependabotSignoffTests(unittest.TestCase):
