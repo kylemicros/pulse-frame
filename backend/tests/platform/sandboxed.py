@@ -22,6 +22,7 @@ BACKEND = Path(__file__).resolve().parents[2]
 ASTRONAUT = BACKEND / "tests" / "fixtures" / "astronaut.jpg"
 SANDBOX_MODULE = "pulse_frame.platform.sandbox"
 LIVE_CHECK_MODULE = "pulse_frame.tools.live_check"
+SESSIONS_MODULE = "pulse_frame.tools.sessions"
 LIBSYSTEM = "/usr/lib/libSystem.B.dylib"
 PUBLIC_ENDPOINTS = (
     (socket.AF_INET, ("1.1.1.1", 443)),
@@ -538,6 +539,130 @@ def scenario_live_check_broken(path: Path, mode: str) -> None:
         live_check.main()
 
 
+def watch_connections(record: Record, refuse: bool) -> None:
+    import psycopg
+
+    real_connect = psycopg.connect
+    seen: list[object] = []
+    record["connect_statuses"] = seen
+
+    def connect(*args: object, **kwargs: object) -> object:
+        seen.append(current_status())
+        if refuse:
+            raise psycopg.OperationalError("the probe refused this connection")
+        return real_connect(*args, **kwargs)
+
+    psycopg.connect = connect
+
+
+def run_sessions_list(record: Record, refuse: bool) -> None:
+    sessions = importlib.import_module(SESSIONS_MODULE)
+    watch_connections(record, refuse)
+    raise SystemExit(sessions.main(["list"]))
+
+
+def scenario_sessions(path: Path) -> None:
+    record: Record = {"stdout_is_none": sys.stdout is None}
+    write_at_exit(path, record)
+    run_sessions_list(record, refuse=False)
+
+
+def scenario_sessions_unsupported(path: Path) -> None:
+    record: Record = {}
+    write_at_exit(path, record)
+    record["unsupported"] = apply_sandbox_on("linux")
+    run_sessions_list(record, refuse=False)
+
+
+def scenario_sessions_broken(path: Path, mode: str) -> None:
+    record: Record = {}
+    write_at_exit(path, record)
+    sessions = importlib.import_module(SESSIONS_MODULE)
+    watch_connections(record, refuse=True)
+    break_libsystem(mode)
+    with faked_platform("darwin"):
+        raise SystemExit(sessions.main(["list"]))
+
+
+class Terminal:
+    def __init__(self, answer: str | None, record: Record) -> None:
+        self.answer = answer
+        self.record = record
+        self.answered = False
+
+    def isatty(self) -> bool:
+        return True
+
+    def readline(self, *args: object) -> str:
+        self.record["prompted"] = True
+        if self.answer is None:
+            raise KeyboardInterrupt
+        self.answered = True
+        return self.answer
+
+
+def interrupt_every_connect(record: Record) -> None:
+    import psycopg
+
+    record["interrupted_connects"] = 0
+
+    def connect(*args: object, **kwargs: object) -> object:
+        record["interrupted_connects"] = int(record["interrupted_connects"]) + 1
+        raise KeyboardInterrupt
+
+    psycopg.connect = connect
+
+
+def statement_text(query: object, cursor: object) -> str:
+    from psycopg import sql
+
+    if isinstance(query, sql.Composable):
+        return query.as_string(cursor)
+    return query.decode() if isinstance(query, bytes) else str(query)
+
+
+def interrupt_after_the_delete_executes(record: Record, terminal: Terminal) -> None:
+    import psycopg
+
+    real_execute = psycopg.Cursor.execute
+    record["deletes_executed"] = 0
+    record["deleted_rows"] = None
+
+    def execute(self: object, query: object, *args: object, **kwargs: object) -> object:
+        cursor = real_execute(self, query, *args, **kwargs)
+        text = statement_text(query, self).lstrip().upper()
+        if terminal.answered and text.startswith("DELETE"):
+            record["deletes_executed"] = int(record["deletes_executed"]) + 1
+            record["deleted_rows"] = cursor.rowcount
+            raise KeyboardInterrupt
+        return cursor
+
+    psycopg.Cursor.execute = execute
+
+
+def scenario_sessions_interrupted(path: Path, moment: str, session_id: str) -> None:
+    record: Record = {"prompted": False}
+    write_at_exit(path, record)
+    sessions = importlib.import_module(SESSIONS_MODULE)
+    answer = None if moment == "at-prompt" else f"{session_id}\n"
+    terminal = Terminal(answer, record)
+    sys.stdin = terminal
+    if moment in {"during-list", "before-prompt"}:
+        interrupt_every_connect(record)
+    if moment == "after-retype":
+        interrupt_after_the_delete_executes(record, terminal)
+    argv = ["list"] if moment == "during-list" else ["delete", session_id]
+    raise SystemExit(sessions.main(argv))
+
+
+def scenario_sessions_delete(path: Path, session_id: str) -> None:
+    record: Record = {"prompted": False, "stdout_is_none": sys.stdout is None}
+    write_at_exit(path, record)
+    sessions = importlib.import_module(SESSIONS_MODULE)
+    sys.stdin = Terminal(f"{session_id}\n", record)
+    raise SystemExit(sessions.main(["delete", session_id]))
+
+
 def scenario_model_main(path: Path) -> None:
     network: list[str] = []
 
@@ -574,6 +699,11 @@ SCENARIOS: dict[str, Callable[..., None]] = {
     "live-check-broken": scenario_live_check_broken,
     "live-check-camera-fails": scenario_live_check_camera_fails,
     "model-main": scenario_model_main,
+    "sessions": scenario_sessions,
+    "sessions-unsupported": scenario_sessions_unsupported,
+    "sessions-broken": scenario_sessions_broken,
+    "sessions-interrupted": scenario_sessions_interrupted,
+    "sessions-delete": scenario_sessions_delete,
 }
 
 

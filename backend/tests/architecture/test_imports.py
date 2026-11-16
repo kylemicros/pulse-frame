@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 from tests.architecture.allowed_imports import PACKAGES
@@ -5,6 +6,22 @@ from tests.architecture.import_check import DATA_MODULE, import_violations
 
 REPO = Path(__file__).resolve().parents[3]
 SOURCE_PACKAGE = REPO / "backend" / "src" / "pulse_frame"
+
+
+def psycopg_importers(package_root: Path) -> list[str]:
+    importers = []
+    for path in sorted(package_root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module or ""]
+            else:
+                continue
+            if any(name.split(".")[0] == "psycopg" for name in names):
+                importers.append(path.relative_to(package_root).as_posix())
+    return importers
 
 
 def test_real_source_tree_follows_the_import_tables() -> None:
@@ -24,3 +41,10 @@ def test_every_source_package_is_in_the_table() -> None:
         f"`ALLOWED_IMPORTS` rows in {DATA_MODULE} match the folders, "
         "or move the stray folder's modules into an existing package."
     )
+
+
+def test_only_the_store_package_imports_psycopg_in_the_real_source() -> None:
+    importers = psycopg_importers(SOURCE_PACKAGE)
+    assert importers, "no module under backend/src/pulse_frame imports psycopg"
+    outside = [path for path in importers if not path.startswith("store/")]
+    assert outside == [], f"psycopg is imported outside the store package: {outside}"

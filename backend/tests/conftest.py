@@ -1,4 +1,5 @@
 import os
+from collections.abc import Generator
 from pathlib import Path
 
 from pulse_frame.platform.sandbox import apply_loopback_sandbox
@@ -11,6 +12,7 @@ import pytest  # noqa: E402
 from numpy.typing import NDArray  # noqa: E402
 
 from pulse_frame.vision.model import ensure_model  # noqa: E402
+from tests import database  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 UNSANDBOXED_ACTION = (
@@ -47,6 +49,43 @@ def load_rgb(path: Path) -> NDArray[np.uint8]:
 @pytest.fixture(scope="session")
 def face_model() -> Path:
     return ensure_model(download=False)
+
+
+@pytest.fixture(autouse=True)
+def no_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(database.URL_VARIABLE, raising=False)
+
+
+@pytest.fixture(scope="session")
+def store_database() -> Generator[str]:
+    server = database.server_url()
+    with database.run_lock(server):
+        url = database.recreate_database(server, database.TEST_DATABASE)
+        database.apply_migrations(url)
+        yield url
+        database.drop_database(server, database.TEST_DATABASE)
+
+
+@pytest.fixture
+def store_url(store_database: str, monkeypatch: pytest.MonkeyPatch) -> str:
+    database.empty_tables(store_database)
+    monkeypatch.setenv(database.URL_VARIABLE, store_database)
+    return store_database
+
+
+@pytest.fixture
+def unmigrated_store(store_url: str) -> Generator[str]:
+    database.hide_store(store_url)
+    yield store_url
+    database.restore_store(store_url)
+
+
+@pytest.fixture
+def read_only_session(store_url: str) -> Generator[int]:
+    session_id = database.seed_session(store_url)
+    database.make_read_only(store_url)
+    yield session_id
+    database.make_writable(store_url)
 
 
 @pytest.fixture(scope="module")

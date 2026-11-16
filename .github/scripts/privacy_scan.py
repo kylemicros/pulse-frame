@@ -22,7 +22,30 @@ DATA_SUFFIXES = {
     ".task",
     ".tflite",
     ".onnx",
+    ".sql",
+    ".dump",
+    ".backup",
 }
+MIGRATION_PATH = re.compile(r"supabase/migrations/[0-9]{14}_[a-z0-9_]+\.sql")
+SQL_DUMP_MARKER = re.compile(r"Dumped from database version", re.IGNORECASE)
+SQL_TOKENS = re.compile(
+    r"(?P<keep>(?<![\w$])\$(?P<tag>(?:[A-Za-z_][A-Za-z_0-9]*)?)\$.*?\$(?P=tag)\$"
+    r"|(?<![\w$])[Ee]'(?:[^'\\]|\\.|'')*'"
+    r"|'(?:[^']|'')*'"
+    r'|"(?:[^"]|"")*")'
+    r"|--[^\n]*"
+    r"|/\*.*?\*/",
+    re.DOTALL,
+)
+SQL_DATA_MARKERS = re.compile(
+    r"insert\s+into"
+    r"|\bcopy\b[^;]*\b(?:from|to)\b"
+    r"|\\copy"
+    r"|values\s*\("
+    r"|\bselect\b[^;]*\binto\b"
+    r"|\bcreate\b[^;]*\b(?:table|materialized\s+view)\b[^;]*\bas\s*\(?\s*(?:select|values|table|with|execute)\b",
+    re.IGNORECASE,
+)
 IMAGE_SUFFIXES = {
     ".png",
     ".jpg",
@@ -182,12 +205,24 @@ def is_pinned(change: Change, data: bytes) -> bool:
     return expected is not None and hashlib.sha256(data).hexdigest() == expected
 
 
+def sql_token_kept(match: re.Match[str]) -> str:
+    return match.group(0) if match.group("keep") else " "
+
+
+def is_schema_migration(change: Change, data: bytes) -> bool:
+    if MIGRATION_PATH.fullmatch(change.path) is None or len(data) > SIZE_LIMIT_BYTES:
+        return False
+    text = data.decode(errors="replace")
+    lexed = SQL_TOKENS.sub(sql_token_kept, text)
+    return SQL_DUMP_MARKER.search(text) is None and SQL_DATA_MARKERS.search(lexed) is None
+
+
 def type_findings(change: Change, data: bytes, where: str) -> list[Finding]:
     path = PurePosixPath(change.path)
     suffix = path.suffix.lower()
     if is_env_file(path.name):
         return [Finding("env file", where)]
-    if suffix in DATA_SUFFIXES:
+    if suffix in DATA_SUFFIXES and not is_schema_migration(change, data):
         return [Finding("data file", where)]
     if suffix in IMAGE_SUFFIXES:
         return [] if is_pinned(change, data) else [Finding("image", where)]
