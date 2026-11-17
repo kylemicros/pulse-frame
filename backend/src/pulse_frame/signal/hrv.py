@@ -51,6 +51,8 @@ SPREAD_LIMIT_MS = 30.0
 class HrvReading:
     rmssd_ms: float | None
     sdnn_ms: float | None
+    window_ms: float | None = None
+    accepted_count: int | None = None
 
 
 NO_HRV = HrvReading(rmssd_ms=None, sdnn_ms=None)
@@ -76,7 +78,13 @@ def hrv_reading(
     return HrvReading(
         rmssd_ms=float(np.sqrt(np.mean(np.square(successive)))),
         sdnn_ms=float(np.std(accepted, ddof=1)),
+        window_ms=window_span_ms(window),
+        accepted_count=int(accepted.size),
     )
+
+
+def window_span_ms(window: Sequence[Interval]) -> float:
+    return max(i.end_ms for i in window) - min(i.start_ms for i in window)
 
 
 def newest_time_ms(
@@ -180,6 +188,9 @@ class HrvTracker:
 
     def intervals(self) -> list[Interval]:
         return [*self._committed, *self._pending]
+
+    def settled_intervals(self) -> list[Interval]:
+        return list(self._committed)
 
     def reading(self) -> HrvReading:
         newest_ms = self._times[-1] if self._times else None

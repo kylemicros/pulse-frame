@@ -62,10 +62,7 @@ def known_beats(
 def ppg_wave(
     times_ms: NDArray[np.float64], beats_ms: NDArray[np.float64]
 ) -> NDArray[np.float64]:
-    phase = PchipInterpolator(beats_ms, 2.0 * np.pi * np.arange(beats_ms.size))(
-        times_ms
-    )
-    return np.cos(phase) + SECOND_HARMONIC * np.cos(2.0 * phase)
+    return rounded_blood_volume(beat_cycles(times_ms, beats_ms))
 
 
 def frame_times(

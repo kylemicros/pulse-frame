@@ -22,6 +22,7 @@ from tests.signal.hrv_tracking import (
     feed,
     hrv_errors,
     is_null,
+    seconds_of,
     tracked,
     true_ibis_inside,
 )
@@ -49,6 +50,7 @@ SWEEP_TOLERANCE_MS = {50.0: 5.0, 60.0: 3.0, 110.0: 3.0}
 PEAK_OFFSET_LIMIT_MS = 40.0
 TOO_FAST_BPM = 200.0
 EDGE_MS = 3_000.0
+UPDATE_MS = 1_000.0
 SETTLED_DEVIATION_MS = 8.0
 SETTLING_BPM = 50.0
 SETTLING_NOISE_SD = 0.005
@@ -199,7 +201,7 @@ def test_a_motion_flagged_frame_rejects_only_the_beats_around_it() -> None:
 
 def test_a_low_quality_span_rejects_every_beat_that_touches_it() -> None:
     recording, _ = beat_recording(TRUE_BPM, SEED, DURATION_S)
-    seconds = (recording.timestamps_ms - recording.timestamps_ms[0]) / 1000.0
+    seconds = seconds_of(recording)
     low = (seconds >= LOW_FROM_S) & (seconds <= LOW_TO_S)
     low_from = float(recording.timestamps_ms[low][0])
     low_to = float(recording.timestamps_ms[low][-1])
@@ -214,18 +216,24 @@ def test_a_low_quality_span_rejects_every_beat_that_touches_it() -> None:
     assert {i.flag for i in touching} == {"low_quality"}
 
 
-def gapped_recording() -> tuple[Recording, float, float]:
-    whole, _ = beat_recording(TRUE_BPM, SEED, DURATION_S + GAP_S)
-    seconds = (whole.timestamps_ms - whole.timestamps_ms[0]) / 1000.0
-    keep = (seconds < GAP_FROM_S) | (seconds >= GAP_FROM_S + GAP_S)
+def gapped_recording(
+    whole: Recording, gap_from_s: float
+) -> tuple[Recording, float, float]:
+    seconds = seconds_of(whole)
+    keep = (seconds < gap_from_s) | (seconds >= gap_from_s + GAP_S)
     recording = Recording(whole.timestamps_ms[keep], whole.regions[keep])
-    gap_from = float(whole.timestamps_ms[seconds < GAP_FROM_S][-1])
-    gap_to = float(whole.timestamps_ms[seconds >= GAP_FROM_S + GAP_S][0])
+    gap_from = float(whole.timestamps_ms[seconds < gap_from_s][-1])
+    gap_to = float(whole.timestamps_ms[seconds >= gap_from_s + GAP_S][0])
     return recording, gap_from, gap_to
 
 
+def ninety_seconds_with_a_gap() -> tuple[Recording, float, float]:
+    whole, _ = beat_recording(TRUE_BPM, SEED, DURATION_S + GAP_S)
+    return gapped_recording(whole, GAP_FROM_S)
+
+
 def test_no_accepted_interval_spans_a_gap_and_beats_either_side_still_count() -> None:
-    recording, gap_from, gap_to = gapped_recording()
+    recording, gap_from, gap_to = ninety_seconds_with_a_gap()
     tracker = HrvTracker()
 
     feed(tracker, recording)
@@ -238,7 +246,7 @@ def test_no_accepted_interval_spans_a_gap_and_beats_either_side_still_count() ->
 
 
 def test_no_beat_is_kept_within_three_seconds_either_side_of_a_gap() -> None:
-    recording, gap_from, gap_to = gapped_recording()
+    recording, gap_from, gap_to = ninety_seconds_with_a_gap()
 
     beats = beat_times(tracked(recording).intervals())
 
@@ -350,13 +358,29 @@ def test_beats_are_accepted_within_fourteen_seconds_after_a_gap(seed: int) -> No
         BEFORE_GAP_S + GAP_S + YOUNG_SEGMENT_S,
         noise_sd=TRACKER_NOISE_SD,
     )
-    seconds = (whole.timestamps_ms - whole.timestamps_ms[0]) / 1000.0
-    keep = (seconds < BEFORE_GAP_S) | (seconds >= BEFORE_GAP_S + GAP_S)
-    recording = Recording(whole.timestamps_ms[keep], whole.regions[keep])
-    gap_to = float(whole.timestamps_ms[seconds >= BEFORE_GAP_S + GAP_S][0])
+    recording, _, gap_to = gapped_recording(whole, BEFORE_GAP_S)
 
     kept = accepted(tracked(recording).intervals())
 
     after_gap = [i for i in kept if i.start_ms >= gap_to]
     assert recording.timestamps_ms[-1] - gap_to < 15_000.0
     assert len(after_gap) >= YOUNG_SEGMENT_MIN_ACCEPTED
+
+
+def test_settled_intervals_are_the_committed_head_of_intervals_before_the_edge() -> (
+    None
+):
+    recording, _ = beat_recording(TRUE_BPM, SEED, DURATION_S)
+    tracker = tracked(recording)
+    newest_ms = float(recording.timestamps_ms[-1])
+
+    settled = tracker.settled_intervals()
+    every = tracker.intervals()
+
+    assert 0 < len(settled) < len(every)
+    assert every[: len(settled)] == settled
+    assert all(i.end_ms <= newest_ms - EDGE_MS for i in settled)
+    assert all(i.flag != "edge" for i in settled)
+    assert all(
+        i.end_ms > newest_ms - EDGE_MS - UPDATE_MS for i in every[len(settled) :]
+    )

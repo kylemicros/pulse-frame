@@ -285,3 +285,37 @@ def test_a_region_with_no_beats_gives_a_finite_spread_at_the_clip() -> None:
     expected = float(np.std([0.0, 6.0, -MAX_IBI_MS]))
     assert np.isfinite(spreads).all()
     assert spreads.tolist() == pytest.approx([expected] * 3, abs=1e-9)
+
+
+def test_reading_reports_the_span_and_the_accepted_count_it_used() -> None:
+    ibis = respiring_ibis(SETTLED_IBIS)
+    marks = flagged(len(ibis), 10)
+
+    reading = hrv_reading(chain(ibis, flags=marks))
+
+    assert reading.window_ms == pytest.approx(sum(ibis), abs=WINDOW_TOLERANCE_MS)
+    assert reading.accepted_count == marks.count("ok")
+
+
+def test_reading_window_never_spans_more_than_three_hundred_seconds() -> None:
+    ibis = respiring_ibis(WINDOW_FILLING_IBIS)
+    intervals = chain(ibis)
+    newest_ms = intervals[-1].end_ms
+    inside = [i for i in intervals if i.start_ms >= newest_ms - WINDOW_S * 1000.0]
+
+    reading = hrv_reading(intervals)
+
+    assert reading.window_ms is not None
+    assert reading.window_ms <= WINDOW_S * 1000.0
+    assert reading.window_ms == pytest.approx(
+        newest_ms - inside[0].start_ms, abs=WINDOW_TOLERANCE_MS
+    )
+    assert reading.accepted_count == len(inside)
+
+
+def test_no_reading_carries_no_window_and_no_accepted_count() -> None:
+    reading = hrv_reading(chain(respiring_ibis(EDGE_IBIS)))
+
+    assert_null(reading)
+    assert reading.window_ms is None
+    assert reading.accepted_count is None
