@@ -12,15 +12,19 @@ from tests import database
 from tests.database import (
     MALFORMED_MARKER,
     MALFORMED_URL,
+    MONOTONIC_NS,
     RUN_LOCK,
     TEST_DATABASE,
     UNREACHABLE_URL,
     URL_VARIABLE,
+    WALL_NS,
     RefusedDatabaseError,
     apply_migrations,
     drop_database,
     empty_tables,
     hide_store,
+    insert_recording,
+    insert_samples,
     make_read_only,
     make_writable,
     plant_public_default_privileges,
@@ -30,6 +34,8 @@ from tests.database import (
     scoped_url,
     seed_session,
     server_url,
+    stored_rows,
+    stored_session_ids,
     with_database_url,
 )
 from tests.platform.sandboxed import BACKEND
@@ -67,6 +73,18 @@ def on_a_url_naming(helper: Callable[[str], object]) -> Callable[[str, str], obj
     return call
 
 
+def insert_empty_recording(url: str) -> int:
+    return insert_recording(url, WALL_NS, MONOTONIC_NS, [])
+
+
+def insert_no_samples(url: str) -> None:
+    insert_samples(url, 1, [])
+
+
+def read_session_rows(url: str) -> object:
+    return stored_rows(url, "sessions", 1, ["id"])
+
+
 HELPERS = [
     drop_database,
     recreate_database,
@@ -82,6 +100,10 @@ HELPERS = [
             make_read_only,
             make_writable,
             plant_public_default_privileges,
+            insert_empty_recording,
+            insert_no_samples,
+            read_session_rows,
+            stored_session_ids,
         )
     ),
 ]

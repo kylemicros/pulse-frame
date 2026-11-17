@@ -7,6 +7,7 @@ StoreErrorCode = Literal[
     "STORE_NOT_MIGRATED",
     "STORE_QUERY_FAILED",
     "SESSION_NOT_FOUND",
+    "DUPLICATE_ROWS",
 ]
 
 

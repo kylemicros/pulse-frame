@@ -1,7 +1,7 @@
 import os
 import time
 import uuid
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -48,9 +48,13 @@ CHILD_TABLES = (
     "beats",
     "intervals",
     "hrv_readings",
-    "watch_ecg_samples",
-    "watch_optical_beats",
 )
+COLOUR_COLUMNS = tuple(
+    f"{region}_{channel}"
+    for region in ("forehead", "left_cheek", "right_cheek")
+    for channel in ("r", "g", "b")
+)
+SAMPLE_COLUMNS = ("t_ms", *COLOUR_COLUMNS, "moving")
 STORE_TABLES = (SESSION_TABLE, *CHILD_TABLES)
 SYNTHETIC_VALUES: dict[str, object] = {
     "smallint": 1,
@@ -66,9 +70,8 @@ SYNTHETIC_VALUES: dict[str, object] = {
 
 WALL_NS = 1_794_787_200_123_456_789
 MONOTONIC_NS = 734_512_345_678_901
-START_MS = WALL_NS // 1_000_000
+START_MS = MONOTONIC_NS // 1_000_000
 FRAME_STEP_MS = 33
-ECG_LAST_SAMPLE = 15_359
 
 type Row = dict[str, object]
 
@@ -98,28 +101,32 @@ SEEDED_ROWS: dict[str, tuple[Row, ...]] = {
         {"t_ms": START_MS + 2_049},
     ),
     "intervals": (
-        {"t_ms": START_MS + 1_236, "interval_ms": 824.0, "flagged": False},
-        {"t_ms": START_MS + 2_049, "interval_ms": 813.0, "flagged": False},
-        {"t_ms": START_MS + 3_418, "interval_ms": 1_369.0, "flagged": True},
+        {"t_ms": START_MS + 1_236, "interval_ms": 824.0, "flag": 0},
+        {"t_ms": START_MS + 2_049, "interval_ms": 813.0, "flag": 0},
+        {"t_ms": START_MS + 3_418, "interval_ms": 1_369.0, "flag": 6},
     ),
     "hrv_readings": (
-        {"t_ms": START_MS + 30_000, "rmssd_ms": 42.7, "sdnn_ms": 51.3},
-        {"t_ms": START_MS + 60_000, "rmssd_ms": 39.2, "sdnn_ms": 48.9},
-        {"t_ms": START_MS + 90_000, "rmssd_ms": 44.1, "sdnn_ms": 53.6},
-    ),
-    "watch_ecg_samples": tuple(
-        {"recording": recording, "sample_index": index, "microvolts": microvolts}
-        for recording in (1, 2)
-        for index, microvolts in (
-            (0, -84.2),
-            (7_680, 1_204.6),
-            (ECG_LAST_SAMPLE, 312.9),
-        )
-    ),
-    "watch_optical_beats": (
-        {"t_ms": START_MS + 405},
-        {"t_ms": START_MS + 1_228},
-        {"t_ms": START_MS + 2_061},
+        {
+            "t_ms": START_MS + 70_000,
+            "rmssd_ms": 42.7,
+            "sdnn_ms": 51.3,
+            "window_ms": 64_120.5,
+            "accepted_count": 78,
+        },
+        {
+            "t_ms": START_MS + 71_000,
+            "rmssd_ms": 39.2,
+            "sdnn_ms": 48.9,
+            "window_ms": 65_080.25,
+            "accepted_count": 79,
+        },
+        {
+            "t_ms": START_MS + 72_000,
+            "rmssd_ms": 44.1,
+            "sdnn_ms": 53.6,
+            "window_ms": 66_010.75,
+            "accepted_count": 80,
+        },
     ),
 }
 SEEDED_COUNTS = {table: len(rows) for table, rows in SEEDED_ROWS.items()}
@@ -361,6 +368,67 @@ def seed_session(url: str) -> int:
                 insert_row(conn, columns, table, seeded, session_id)
     assert isinstance(session_id, int), f"session IDs are numbers, got {session_id!r}"
     return session_id
+
+
+def insert_recording(
+    url: str, wall_ns: int, monotonic_ns: int, samples: Sequence[Row]
+) -> int:
+    require_test_url(url)
+    session_statement = sql.SQL(
+        "INSERT INTO {} (started_wall_ns, started_monotonic_ns)"
+        " VALUES (%s, %s) RETURNING id"
+    ).format(store_table(SESSION_TABLE))
+    with psycopg.connect(url) as conn:
+        row = conn.execute(session_statement, [wall_ns, monotonic_ns]).fetchone()
+        assert row is not None, "inserting a recording's session returned nothing"
+        session_id = row[0]
+    assert isinstance(session_id, int), f"session IDs are numbers, got {session_id!r}"
+    insert_samples(url, session_id, samples)
+    return session_id
+
+
+def insert_samples(url: str, session_id: int, samples: Sequence[Row]) -> None:
+    require_test_url(url)
+    statement = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+        store_table("frame_samples"),
+        sql.SQL(", ").join(
+            sql.Identifier(name) for name in (SESSION_KEY, *SAMPLE_COLUMNS)
+        ),
+        sql.SQL(", ").join(sql.Placeholder() for _ in range(len(SAMPLE_COLUMNS) + 1)),
+    )
+    with psycopg.connect(url) as conn, conn.cursor() as cursor:
+        cursor.executemany(
+            statement,
+            [
+                [session_id, *(sample[name] for name in SAMPLE_COLUMNS)]
+                for sample in samples
+            ],
+        )
+
+
+def stored_rows(
+    url: str, table: str, session_id: object, columns: Sequence[str]
+) -> list[tuple[object, ...]]:
+    require_test_url(url)
+    key = SESSION_ID if table == SESSION_TABLE else SESSION_KEY
+    order = SESSION_ID if table == SESSION_TABLE else "t_ms"
+    statement = sql.SQL("SELECT {} FROM {} WHERE {} = %s ORDER BY {}").format(
+        sql.SQL(", ").join(sql.Identifier(name) for name in columns),
+        store_table(table),
+        sql.Identifier(key),
+        sql.Identifier(order),
+    )
+    with psycopg.connect(url) as conn:
+        return conn.execute(statement, [session_id], binary=True).fetchall()
+
+
+def stored_session_ids(url: str) -> list[int]:
+    require_test_url(url)
+    statement = sql.SQL("SELECT id FROM {} ORDER BY id").format(
+        store_table(SESSION_TABLE)
+    )
+    with psycopg.connect(url) as conn:
+        return [row[0] for row in conn.execute(statement).fetchall()]
 
 
 def rows_under(url: str, session_id: object) -> dict[str, int]:

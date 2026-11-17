@@ -36,10 +36,15 @@ LISTED_COLUMNS = {
         "moving",
     },
     "beats": {"session_id", "t_ms"},
-    "intervals": {"session_id", "t_ms", "interval_ms", "flagged"},
-    "hrv_readings": {"session_id", "t_ms", "rmssd_ms", "sdnn_ms"},
-    "watch_ecg_samples": {"session_id", "recording", "sample_index", "microvolts"},
-    "watch_optical_beats": {"session_id", "t_ms"},
+    "intervals": {"session_id", "t_ms", "interval_ms", "flag"},
+    "hrv_readings": {
+        "session_id",
+        "t_ms",
+        "rmssd_ms",
+        "sdnn_ms",
+        "window_ms",
+        "accepted_count",
+    },
 }
 CLOCK_COLUMNS = {
     ("sessions", "started_wall_ns"),
@@ -48,8 +53,29 @@ CLOCK_COLUMNS = {
     ("beats", "t_ms"),
     ("intervals", "t_ms"),
     ("hrv_readings", "t_ms"),
-    ("watch_optical_beats", "t_ms"),
 }
+PINNED_TYPES = {
+    ("intervals", "flag"): "smallint",
+    ("hrv_readings", "window_ms"): "double precision",
+    ("hrv_readings", "accepted_count"): "integer",
+    ("hrv_readings", "rmssd_ms"): "double precision",
+    ("hrv_readings", "sdnn_ms"): "double precision",
+}
+FLAG_CODES = range(7)
+OUT_OF_RANGE_FLAGS = [-1, 7]
+DUPLICATE_KEY = {SESSION_KEY, "t_ms"}
+WATCH_PREFIX = "watch_"
+INDEXES = """
+SELECT relation.relname, array_agg(attribute.attname::text), index_row.indisprimary
+FROM pg_index AS index_row
+JOIN pg_class AS relation ON relation.oid = index_row.indrelid
+JOIN pg_namespace AS space ON space.oid = relation.relnamespace
+JOIN pg_attribute AS attribute
+  ON attribute.attrelid = index_row.indrelid
+ AND attribute.attnum = ANY (index_row.indkey)
+WHERE space.nspname = %s
+GROUP BY relation.relname, index_row.indexrelid, index_row.indisprimary
+"""
 FORBIDDEN_WORDS = {
     "image",
     "images",
@@ -127,10 +153,19 @@ def query(url: str, statement: str) -> list[tuple[object, ...]]:
         return conn.execute(statement, [store.STORE_SCHEMA]).fetchall()
 
 
-def test_migration_creates_exactly_the_seven_session_tables_in_the_store_schema(
+def test_migrations_leave_exactly_the_five_session_tables_in_the_store_schema(
     store_url: str,
 ) -> None:
-    assert set(store_tables(store_url)) == set(STORE_TABLES)
+    tables = store_tables(store_url)
+    assert len(tables) == 5
+    assert set(tables) == set(STORE_TABLES)
+
+
+def test_no_watch_table_is_left_in_the_store_schema(store_url: str) -> None:
+    watch = [
+        table for table in store_tables(store_url) if table.startswith(WATCH_PREFIX)
+    ]
+    assert watch == [], f"watch tables still in the store: {watch}"
 
 
 def test_public_schema_holds_no_table(store_url: str) -> None:
@@ -183,12 +218,121 @@ def test_the_migration_grants_nothing_to_public_under_hostile_default_privileges
 
 
 @pytest.mark.parametrize("table", STORE_TABLES)
-def test_each_table_has_its_listed_columns(store_url: str, table: str) -> None:
+def test_each_table_has_exactly_its_listed_columns(store_url: str, table: str) -> None:
     present = {
         column.name for column in store_columns(store_url) if column.table == table
     }
     missing = sorted(LISTED_COLUMNS[table] - present)
+    extra = sorted(present - LISTED_COLUMNS[table])
     assert missing == [], f"`{table}` lacks the columns {missing}"
+    assert extra == [], f"`{table}` has unlisted columns {extra}"
+
+
+def test_interval_flag_hrv_window_and_accepted_count_have_their_pinned_types(
+    store_url: str,
+) -> None:
+    types = {
+        (column.table, column.name): column.data_type
+        for column in store_columns(store_url)
+    }
+    wrong = sorted(
+        f"{table}.{name}: {types.get((table, name))}, expected {expected}"
+        for (table, name), expected in PINNED_TYPES.items()
+        if types.get((table, name)) != expected
+    )
+    assert wrong == [], wrong
+
+
+def test_every_store_column_is_not_null_so_hrv_rows_are_written_only_when_set(
+    store_url: str,
+) -> None:
+    nullable = sorted(
+        f"{column.table}.{column.name}"
+        for column in store_columns(store_url)
+        if column.nullable
+    )
+    assert nullable == [], f"columns that allow NULL: {nullable}"
+
+
+@pytest.mark.parametrize("flag", FLAG_CODES)
+def test_intervals_accept_every_tracker_flag_code(store_url: str, flag: int) -> None:
+    session_id = database.seed_session(store_url)
+    columns = store_columns(store_url)
+    row = {"t_ms": database.START_MS + 9_000, "interval_ms": 801.5, "flag": flag}
+
+    with psycopg.connect(store_url) as conn:
+        database.insert_row(conn, columns, "intervals", row, session_id)
+
+    stored = database.stored_rows(store_url, "intervals", session_id, ["t_ms", "flag"])
+    assert (row["t_ms"], flag) in stored
+
+
+@pytest.mark.parametrize("flag", OUT_OF_RANGE_FLAGS)
+def test_intervals_refuse_a_flag_code_outside_the_tracker_flags(
+    store_url: str, flag: int
+) -> None:
+    session_id = database.seed_session(store_url)
+    columns = store_columns(store_url)
+    row = {"t_ms": database.START_MS + 9_000, "interval_ms": 801.5, "flag": flag}
+
+    with (
+        pytest.raises(psycopg.errors.CheckViolation),
+        psycopg.connect(store_url) as conn,
+    ):
+        database.insert_row(conn, columns, "intervals", row, session_id)
+
+    counts = database.rows_under(store_url, session_id)
+    assert counts["intervals"] == database.SEEDED_COUNTS["intervals"]
+
+
+def child_indexes(url: str, table: str) -> list[tuple[set[str], bool]]:
+    return [
+        (set(columns), primary)
+        for name, columns, primary in query(url, INDEXES)
+        if name == table
+    ]
+
+
+@pytest.mark.parametrize("table", CHILD_TABLES)
+def test_every_child_table_is_keyed_by_its_session_and_time(
+    store_url: str, table: str
+) -> None:
+    primary = [
+        columns for columns, is_primary in child_indexes(store_url, table) if is_primary
+    ]
+    assert primary == [DUPLICATE_KEY], (
+        f"`{table}` primary key is {[sorted(key) for key in primary]},"
+        f" expected {sorted(DUPLICATE_KEY)}"
+    )
+
+
+@pytest.mark.parametrize("table", CHILD_TABLES)
+def test_a_child_tables_only_index_is_its_primary_key(
+    store_url: str, table: str
+) -> None:
+    others = sorted(
+        sorted(columns)
+        for columns, is_primary in child_indexes(store_url, table)
+        if not is_primary
+    )
+    assert others == [], f"`{table}` keeps indexes beside its primary key: {others}"
+
+
+@pytest.mark.parametrize("table", CHILD_TABLES)
+def test_a_duplicate_child_row_is_refused_by_the_database(
+    store_url: str, table: str
+) -> None:
+    session_id = database.seed_session(store_url)
+    columns = store_columns(store_url)
+    (first, *_) = database.SEEDED_ROWS[table]
+
+    with (
+        pytest.raises(psycopg.errors.UniqueViolation),
+        psycopg.connect(store_url) as conn,
+    ):
+        database.insert_row(conn, columns, table, first, session_id)
+
+    assert database.rows_under(store_url, session_id) == database.SEEDED_COUNTS
 
 
 def test_every_column_holds_a_number_flag_or_time(store_url: str) -> None:
