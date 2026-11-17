@@ -12,7 +12,7 @@ from pulse_frame.monitor.processor import FrameProcessor, FrameResult
 from pulse_frame.signal.tracker import MAX_GAP_MS, UPDATE_INTERVAL_MS, Reading
 from pulse_frame.vision.landmarks import FaceTracker
 from pulse_frame.vision.motion import MOVING_SHARE_OF_FACE_WIDTH
-from pulse_frame.vision.regions import named_region_polygons
+from pulse_frame.vision.regions import REGION_NAMES, named_region_polygons, skin_mean
 from tests.frames import (
     PULSE_STEP_MS,
     REFERENCE_FRAME_MS,
@@ -242,6 +242,37 @@ def test_face_shifted_after_an_ok_pulse_is_moving_then_low_quality(
         assert result.reading.bpm is None
 
 
+def test_colours_are_the_region_means_on_a_full_face_and_none_on_frames_without_them(
+    processor: FrameProcessor,
+    astronaut_rgb: NDArray[np.uint8],
+    forehead_cropped: Transform,
+) -> None:
+    clock = FrameClock()
+    frames = (
+        [astronaut_rgb] * 3
+        + [forehead_cropped(astronaut_rgb)] * 5
+        + [astronaut_rgb] * 3
+        + [crop_to_a_face_without_usable_regions(astronaut_rgb)] * 3
+        + [np.zeros_like(astronaut_rgb)] * 2
+    )
+
+    runs = [(frame, processor.process(frame, clock.next_ms())) for frame in frames]
+
+    fed = [(frame, result) for frame, result in runs if every_patch_usable(result)]
+    unfed = [result for _, result in runs if not every_patch_usable(result)]
+    assert len(fed) >= 3
+    for frame, result in fed:
+        assert result.colours is not None
+        outlines = [result.patches[name].outline for name in REGION_NAMES]
+        means = tuple(
+            skin_mean(frame, [outline]) for outline in outlines if outline is not None
+        )
+        assert result.colours.triples() == means
+    assert any(result.face for result in unfed)
+    assert any(not result.face for result in unfed)
+    assert all(result.colours is None for result in unfed)
+
+
 def test_face_cut_off_above_the_brows_keeps_two_cheek_regions_without_raising(
     processor: FrameProcessor, face_model: Path, astronaut_rgb: NDArray[np.uint8]
 ) -> None:
@@ -287,6 +318,12 @@ def face_results(trace: Trace) -> Trace:
 
 def is_sample(result: FrameResult) -> bool:
     return result.face and len(result.regions) == 3
+
+
+def every_patch_usable(result: FrameResult) -> bool:
+    return bool(result.patches) and all(
+        patch.usable for patch in result.patches.values()
+    )
 
 
 def forehead_flicker(mask: NDArray[np.bool_]) -> TimedTransform:

@@ -230,6 +230,7 @@ def test_camera_that_cannot_open_exits_one_with_camera_unavailable(
     output = capsys.readouterr()
     assert exited.value.code == 1
     assert after_sandbox_notice(output.err).startswith("CAMERA_UNAVAILABLE: ")
+    assert "run live_check again" in output.err
     assert output.out == ""
     assert harness.camera.reads == 0
     assert harness.camera.released == 1
@@ -252,6 +253,7 @@ def test_camera_that_stops_delivering_frames_exits_one_with_camera_read_failed(
     output = capsys.readouterr()
     assert exited.value.code == 1
     assert after_sandbox_notice(output.err).startswith("CAMERA_READ_FAILED: ")
+    assert "run live_check again" in output.err
     assert harness.camera.reads == FAILING_READ
     assert harness.camera.released == 1
     assert files_under(quiet_folder) == []

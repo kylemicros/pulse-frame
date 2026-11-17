@@ -89,14 +89,19 @@ def sandbox_lines(stderr: str) -> list[str]:
     return [line for line in stderr.splitlines() if line.startswith("SANDBOX_")]
 
 
-def sandbox_notice(status: SandboxStatus) -> str:
-    return "" if status.applied else f"{status.code}: {status.reason}\n"
+def sandbox_notice(status: SandboxStatus, action: str = "") -> str:
+    if status.applied:
+        return ""
+    tail = f" {action}" if action else ""
+    return f"{status.code}: {status.reason}{tail}\n"
 
 
-def after_sandbox_notice(err: str, status: SandboxStatus | None = None) -> str:
+def after_sandbox_notice(
+    err: str, status: SandboxStatus | None = None, action: str = ""
+) -> str:
     shown = sandbox_status() if status is None else status
     assert shown is not None, "The session sandbox status was never cached."
-    notice = sandbox_notice(shown)
+    notice = sandbox_notice(shown, action)
     assert err.startswith(notice), (
         f"Stderr should open with the sandbox notice {notice!r}, got {err[:300]!r}"
     )
