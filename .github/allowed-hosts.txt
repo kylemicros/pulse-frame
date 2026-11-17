@@ -1,0 +1,13 @@
+127.0.0.1
+clerk.com
+docs.astral.sh
+files.pythonhosted.org
+github.com
+oxc.rs
+pypi.org
+raw.githubusercontent.com
+react.dev
+storage.googleapis.com
+supabase.com
+swc.rs
+ui.shadcn.com

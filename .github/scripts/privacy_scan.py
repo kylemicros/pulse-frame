@@ -4,7 +4,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 SIZE_LIMIT_BYTES = 100_000
 SIZE_EXEMPT = {"backend/uv.lock", "frontend/pnpm-lock.yaml"}
@@ -114,6 +114,28 @@ DIFF_OPTIONS = (
     "--src-prefix=a/",
     "--dst-prefix=b/",
 )
+ALLOWED_HOSTS_PATH = ".github/allowed-hosts.txt"
+ALLOWED_HOSTS_FILE = Path(__file__).resolve().parents[2] / ALLOWED_HOSTS_PATH
+UNTRUSTED_HOST = "untrusted host"
+SPECIAL_SCHEMES = frozenset({"http", "https", "ws", "wss", "ftp"})
+URL_CONTROLS = str.maketrans("", "", "\t\r")
+URL_AUTHORITY = re.compile(
+    r"([A-Za-z][A-Za-z0-9+.-]{0,63})[:]//((?:[^\s/?#<]|(?<![/]{2})<(?![/]))*)([^\S\n][^\n/?#]*@)?"
+)
+SPECIAL_WITHOUT_SLASHES = re.compile(
+    r"(?<![A-Za-z0-9+.-])(?:"
+    + "|".join(map(re.escape, sorted(SPECIAL_SCHEMES)))
+    + r")[:](?![/]{2})(?=[^\s)\]>\"'`])\S*",
+    re.IGNORECASE,
+)
+GIT_REMOTE_HOST = re.compile(r"\bgit[@]([^\s:/]+):")
+AUTHORITY_TRAILERS = re.compile(r"(?<![)\]>\"'`])[)\]>\"'`]+[,;]*\Z")
+USER_INFO = re.compile(r"[A-Za-z0-9._~%!$&'()*+,;=:-]*")
+HOST_FORM = re.compile(r"[a-z0-9.-]+")
+EXAMPLE_HOST = re.compile(r"(?:[a-z0-9-]+\.)+example")
+EXEMPT_HOSTS = frozenset({"localhost", "host", "postgres"})
+EVERY_SCHEME_EXEMPT_HOSTS = frozenset({"localhost"})
+LS_TREE_FIELDS = 3
 
 
 class ScanError(Exception):
@@ -182,6 +204,84 @@ def text_findings(text: str, where: str) -> list[Finding]:
     if any(not text_email_allowed(match.group(0)) for match in EMAIL.finditer(text)):
         findings.append(Finding("email", where))
     return findings
+
+
+def parse_allowed_hosts(data: bytes, source: str) -> frozenset[str]:
+    try:
+        return frozenset(data.decode("ascii").splitlines())
+    except UnicodeDecodeError as error:
+        raise ScanError(f"allowed hosts list {source} is not ASCII") from error
+
+
+def load_allowed_hosts(path: Path) -> frozenset[str]:
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        raise ScanError(f"allowed hosts list could not be read: {error.strerror}") from error
+    return parse_allowed_hosts(data, "in the tree")
+
+
+def start_list_blob(git: Git, start: str) -> str | None:
+    listed = git.text("ls-tree", "-z", start, "--", ALLOWED_HOSTS_PATH).rstrip("\0")
+    if not listed:
+        return None
+    fields = listed.partition("\t")[0].split()
+    if len(fields) != LS_TREE_FIELDS or fields[1] != "blob":
+        raise ScanError(f"allowed hosts list at commit {start[:7]} is not a file")
+    return fields[2]
+
+
+def allowed_hosts_at(git: Git, start: str) -> frozenset[str]:
+    blob = start_list_blob(git, start)
+    if blob is None:
+        return load_allowed_hosts(ALLOWED_HOSTS_FILE)
+    return parse_allowed_hosts(git.output("cat-file", "blob", blob), f"at commit {start[:7]}")
+
+
+def host_of(authority: str) -> str:
+    user_info, at_sign, host_port = AUTHORITY_TRAILERS.sub("", authority).rpartition("@")
+    if at_sign and USER_INFO.fullmatch(user_info) is None:
+        return authority
+    if host_port.count(":") > 1:
+        return host_port
+    return host_port.partition(":")[0]
+
+
+def url_hosts(text: str) -> list[tuple[str, str]]:
+    hosts = []
+    for match in URL_AUTHORITY.finditer(text):
+        scheme = match.group(1).lower()
+        host = host_of(match.group(2) + (match.group(3) or ""))
+        if host or scheme in SPECIAL_SCHEMES:
+            hosts.append((scheme, host))
+    return hosts
+
+
+def scheme_hosts(text: str) -> list[tuple[str, str]]:
+    cleaned = text.translate(URL_CONTROLS)
+    hosts = url_hosts(cleaned)
+    hosts += [("", match.group(0)) for match in SPECIAL_WITHOUT_SLASHES.finditer(cleaned)]
+    return hosts + [("", match.group(1)) for match in GIT_REMOTE_HOST.finditer(cleaned)]
+
+
+def host_exempt(host: str) -> bool:
+    return host in EXEMPT_HOSTS or EXAMPLE_HOST.fullmatch(host) is not None
+
+
+def host_trusted(host: str, hosts: frozenset[str]) -> bool:
+    return HOST_FORM.fullmatch(host) is not None and (host in hosts or host_exempt(host))
+
+
+def scheme_allows(scheme: str, host: str, hosts: frozenset[str]) -> bool:
+    special_only = host in EXEMPT_HOSTS and host not in EVERY_SCHEME_EXEMPT_HOSTS and host not in hosts
+    return scheme not in SPECIAL_SCHEMES or not special_only
+
+
+def host_findings(text: str, where: str, hosts: frozenset[str]) -> list[Finding]:
+    found = scheme_hosts(text)
+    if any(not host_trusted(host, hosts) or not scheme_allows(scheme, host, hosts) for scheme, host in found):
+        return [Finding(UNTRUSTED_HOST, where)]
+    return []
 
 
 def without_dependabot_signoff(message: str) -> str:
@@ -255,7 +355,7 @@ def added_lines(patch: str) -> dict[str, list[str]]:
     lines: dict[str, list[str]] = {}
     current: str | None = None
     in_hunk = False
-    for line in patch.splitlines():
+    for line in patch.split("\n"):
         if line.startswith("diff --git "):
             current, in_hunk = None, False
         elif not in_hunk and line.startswith("+++ "):
@@ -293,10 +393,11 @@ def commit_details(git: Git, sha: str) -> tuple[list[str], str, str, str]:
     return parents.split(), author, committer, message
 
 
-def commit_findings(git: Git, sha: str, allowed: set[str]) -> list[Finding]:
+def commit_findings(git: Git, sha: str, allowed: set[str], hosts: frozenset[str]) -> list[Finding]:
     short = sha[:7]
     parents, author, committer, message = commit_details(git, sha)
-    findings = text_findings(without_dependabot_signoff(message), f"commit {short} message")
+    where, kept = f"commit {short} message", without_dependabot_signoff(message)
+    findings = text_findings(kept, where) + host_findings(kept, where, hosts)
     for role, email in (("author", author), ("committer", committer)):
         if email and not role_email_allowed(email, allowed):
             findings.append(Finding("email", f"commit {short} {role}"))
@@ -307,7 +408,8 @@ def commit_findings(git: Git, sha: str, allowed: set[str]) -> list[Finding]:
         findings += file_findings(change, blob_content(git, change))
     patch = git.text("diff-tree", "-p", "--no-commit-id", *DIFF_OPTIONS, *trees)
     for path, lines in added_lines(patch).items():
-        findings += text_findings("\n".join(lines), place(path))
+        added, where = "\n".join(lines), place(path)
+        findings += text_findings(added, where) + host_findings(added, where, hosts)
     return findings
 
 
@@ -338,11 +440,12 @@ def unique(findings: list[Finding]) -> list[Finding]:
 def scan_range(repo: str, base: str, head: str) -> list[Finding]:
     git = Git(repo)
     start = resolve_base(git, base, head)
+    hosts = allowed_hosts_at(git, start)
     allowed = history_emails(git, start)
     commits = git.text("rev-list", "--reverse", f"{start}..{head}").split()
     findings: list[Finding] = []
     for sha in commits:
-        findings += commit_findings(git, sha, allowed)
+        findings += commit_findings(git, sha, allowed, hosts)
     return unique(findings)
 
 
