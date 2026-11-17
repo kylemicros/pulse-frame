@@ -90,6 +90,31 @@ COMPLIANT_TREE = {
     "store/sessions.py": (
         "from psycopg import sql\nfrom pulse_frame.store.connection import connect\n"
     ),
+    "store/recording.py": (
+        "from dataclasses import dataclass\n"
+        "from psycopg import sql\n"
+        "from pulse_frame.store.connection import connect\n"
+        "from pulse_frame.store.sessions import query_errors\n"
+    ),
+    "tools/capture.py": (
+        "import argparse\n"
+        "from time import monotonic_ns, time_ns\n"
+        "import cv2\n"
+        "from pulse_frame.platform.sandbox import apply_loopback_sandbox\n"
+        "from pulse_frame.store.recording import"
+        " FrameSample, SessionWriter, open_writer\n"
+        "from pulse_frame.vision.model import ensure_model\n"
+        "def run():\n"
+        "    from pulse_frame.monitor.processor import FrameProcessor\n"
+        "    return FrameProcessor\n"
+    ),
+    "tools/replay.py": (
+        "import argparse\n"
+        "from pulse_frame.platform.sandbox import apply_loopback_sandbox\n"
+        "from pulse_frame.signal.beats import IntervalFlag\n"
+        "from pulse_frame.signal.hrv import HrvTracker\n"
+        "from pulse_frame.store.recording import frame_samples, replace_replay\n"
+    ),
 }
 
 
@@ -139,6 +164,14 @@ LEAF_IMPORTS_A_PACKAGE = [
         "layering",
         (),
     ),
+    Planted(
+        "store/recording.py",
+        "from psycopg import sql\nfrom pulse_frame.signal.beats import IntervalFlag\n",
+        2,
+        "from pulse_frame.signal.beats import IntervalFlag",
+        "layering",
+        (),
+    ),
 ]
 
 PACKAGE_IMPORTS_THE_STORE = [
@@ -166,6 +199,14 @@ PSYCOPG_OUTSIDE_STORE = [
         "import psycopg\n",
         1,
         "import psycopg",
+        "third-party placement",
+        ("store",),
+    ),
+    Planted(
+        "tools/capture.py",
+        "from psycopg import sql\n",
+        1,
+        "from psycopg import sql",
         "third-party placement",
         ("store",),
     ),

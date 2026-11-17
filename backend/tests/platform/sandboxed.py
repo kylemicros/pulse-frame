@@ -23,6 +23,11 @@ ASTRONAUT = BACKEND / "tests" / "fixtures" / "astronaut.jpg"
 SANDBOX_MODULE = "pulse_frame.platform.sandbox"
 LIVE_CHECK_MODULE = "pulse_frame.tools.live_check"
 SESSIONS_MODULE = "pulse_frame.tools.sessions"
+CAPTURE_MODULE = "pulse_frame.tools.capture"
+REPLAY_MODULE = "pulse_frame.tools.replay"
+CAPTURE_WALL_NS = 1_794_787_200_123_456_789
+CAPTURE_MONOTONIC_NS = 734_512_345_678_901
+NS_PER_MS = 1_000_000
 LIBSYSTEM = "/usr/lib/libSystem.B.dylib"
 PUBLIC_ENDPOINTS = (
     (socket.AF_INET, ("1.1.1.1", 443)),
@@ -663,6 +668,85 @@ def scenario_sessions_delete(path: Path, session_id: str) -> None:
     raise SystemExit(sessions.main(["delete", session_id]))
 
 
+def capture_record(path: Path) -> Record:
+    imports: list[object] = []
+    record: Record = {"camera_opened": [], "mediapipe_imports": imports}
+    watch_import("mediapipe", lambda: imports.append(current_status()))
+    write_at_exit(path, record)
+    return record
+
+
+def run_capture_on_the_astronaut(record: Record) -> None:
+    import cv2
+
+    bgr = cv2.imread(str(ASTRONAUT))
+    clock = SteppingClock()
+    opened = record["camera_opened"]
+    cv2.VideoCapture = lambda index, *args: FakeCamera(bgr, clock, opened, index)
+    capture = importlib.import_module(CAPTURE_MODULE)
+    capture.monotonic_ns = lambda: CAPTURE_MONOTONIC_NS + clock.now * NS_PER_MS
+    capture.time_ns = lambda: CAPTURE_WALL_NS + clock.now * NS_PER_MS
+    watch_connections(record, refuse=False)
+    raise SystemExit(capture.main(["--seconds", LIVE_CHECK_SECONDS]))
+
+
+def scenario_capture(path: Path) -> None:
+    run_capture_on_the_astronaut(capture_record(path))
+
+
+def scenario_capture_broken(path: Path, mode: str) -> None:
+    import cv2
+
+    record: Record = {"camera_opened": [], "mediapipe_imports": 0}
+    opened = record["camera_opened"]
+    cv2.VideoCapture = lambda index, *args: opened.append(index)
+
+    def refuse_mediapipe() -> None:
+        record["mediapipe_imports"] = 1
+        raise ImportError("mediapipe was imported after the sandbox failed")
+
+    watch_import("mediapipe", refuse_mediapipe)
+    capture = importlib.import_module(CAPTURE_MODULE)
+    watch_connections(record, refuse=True)
+    break_libsystem(mode)
+    write_at_exit(path, record)
+    with faked_platform("darwin"):
+        raise SystemExit(capture.main(["--seconds", LIVE_CHECK_SECONDS]))
+
+
+def scenario_capture_unsupported(path: Path) -> None:
+    record = capture_record(path)
+    record["unsupported"] = apply_sandbox_on("linux")
+    run_capture_on_the_astronaut(record)
+
+
+def scenario_replay(path: Path, session_id: str) -> None:
+    record: Record = {}
+    write_at_exit(path, record)
+    replay = importlib.import_module(REPLAY_MODULE)
+    watch_connections(record, refuse=False)
+    raise SystemExit(replay.main([session_id]))
+
+
+def scenario_replay_unsupported(path: Path, session_id: str) -> None:
+    record: Record = {}
+    write_at_exit(path, record)
+    record["unsupported"] = apply_sandbox_on("linux")
+    replay = importlib.import_module(REPLAY_MODULE)
+    watch_connections(record, refuse=False)
+    raise SystemExit(replay.main([session_id]))
+
+
+def scenario_replay_broken(path: Path, mode: str) -> None:
+    record: Record = {}
+    write_at_exit(path, record)
+    replay = importlib.import_module(REPLAY_MODULE)
+    watch_connections(record, refuse=True)
+    break_libsystem(mode)
+    with faked_platform("darwin"):
+        raise SystemExit(replay.main(["1"]))
+
+
 def scenario_model_main(path: Path) -> None:
     network: list[str] = []
 
@@ -704,6 +788,12 @@ SCENARIOS: dict[str, Callable[..., None]] = {
     "sessions-broken": scenario_sessions_broken,
     "sessions-interrupted": scenario_sessions_interrupted,
     "sessions-delete": scenario_sessions_delete,
+    "capture": scenario_capture,
+    "capture-broken": scenario_capture_broken,
+    "capture-unsupported": scenario_capture_unsupported,
+    "replay": scenario_replay,
+    "replay-unsupported": scenario_replay_unsupported,
+    "replay-broken": scenario_replay_broken,
 }
 
 

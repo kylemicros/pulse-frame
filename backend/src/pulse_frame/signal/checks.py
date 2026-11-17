@@ -1,4 +1,5 @@
 import math
+from numbers import Real
 
 import numpy as np
 from numpy.typing import NDArray
@@ -132,12 +133,24 @@ def check_rows_match(
         )
 
 
+def check_sample_flags(
+    sample_times: NDArray[np.float64], flags: NDArray[np.bool_], name: str
+) -> None:
+    if flags.shape != sample_times.shape:
+        raise SignalError(
+            "BAD_VALUES",
+            f"Got {flags.size} {name} flags for {sample_times.size} sample times.",
+            f"Pass exactly one {name} flag per sample time.",
+        )
+
+
 def check_timestamp(timestamp_ms: float) -> None:
-    if not math.isfinite(timestamp_ms):
+    if not isinstance(timestamp_ms, Real) or not math.isfinite(timestamp_ms):
         raise SignalError(
             "BAD_TIMESTAMPS",
-            f"The timestamp {timestamp_ms} is not a finite number.",
-            "Pass a finite timestamp in milliseconds.",
+            f"The timestamp {timestamp_ms!r} is not one finite number, so it cannot"
+            " be placed on the time axis.",
+            "Pass a single finite timestamp in milliseconds.",
         )
 
 

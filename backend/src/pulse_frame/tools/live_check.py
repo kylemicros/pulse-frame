@@ -97,15 +97,24 @@ def run(camera_index: int, seconds: float | None) -> None:
         camera.release()
 
 
-def open_camera(index: int) -> cv2.VideoCapture:
+def with_outcome(text: str, outcome: str) -> str:
+    return f"{text} {outcome}" if outcome else text
+
+
+def open_camera(
+    index: int, *, tool: str = "live_check", outcome: str = ""
+) -> cv2.VideoCapture:
     camera = cv2.VideoCapture(index)
     if not camera.isOpened():
         camera.release()
         raise VisionError(
             "CAMERA_UNAVAILABLE",
-            f"Camera {index} could not be opened: access was denied, or no camera"
-            " has that index.",
-            "If macOS just asked for camera access, allow it and run live_check"
+            with_outcome(
+                f"Camera {index} could not be opened: access was denied, or no"
+                " camera has that index.",
+                outcome,
+            ),
+            f"If macOS just asked for camera access, allow it and run {tool}"
             " again. Otherwise allow the app you run the terminal in (Terminal,"
             " iTerm or VS Code) in System Settings, Privacy and Security, Camera,"
             " restart that app, or try another index with --camera.",
@@ -113,15 +122,17 @@ def open_camera(index: int) -> cv2.VideoCapture:
     return camera
 
 
-def read_frame(camera: cv2.VideoCapture) -> NDArray[np.uint8]:
+def read_frame(
+    camera: cv2.VideoCapture, *, tool: str = "live_check", outcome: str = ""
+) -> NDArray[np.uint8]:
     ok, bgr = camera.read()
     if not ok or bgr is None:
         raise VisionError(
             "CAMERA_READ_FAILED",
-            "Camera gave no frame after it opened.",
+            with_outcome("Camera gave no frame after it opened.", outcome),
             "Close other apps that use the camera (video calls, Photo Booth),"
             " check that camera access is still allowed in System Settings,"
-            " Privacy and Security, Camera, then run live_check again.",
+            f" Privacy and Security, Camera, then run {tool} again.",
         )
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 

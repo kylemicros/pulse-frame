@@ -29,3 +29,33 @@ def test_migrations_hold_schema_only() -> None:
         if DATA_STATEMENTS.search(path.read_text(encoding="utf-8"))
     ]
     assert carrying == [], f"migrations carrying data or a dump header: {carrying}"
+
+
+CREATED = re.compile(r"\bcreate\s+table\s+private\.(\w+)", re.IGNORECASE)
+RLS_ENABLED = re.compile(
+    r"\balter\s+table\s+private\.(\w+)\s+enable\s+row\s+level\s+security",
+    re.IGNORECASE,
+)
+REVOKE = re.compile(r"\brevoke\b", re.IGNORECASE)
+
+
+def test_later_migrations_enable_row_security_only_on_tables_they_create() -> None:
+    later = migration_files()[1:]
+    restated = sorted(
+        f"{path.name}: {table}"
+        for path in later
+        for table in set(RLS_ENABLED.findall(path.read_text(encoding="utf-8")))
+        - set(CREATED.findall(path.read_text(encoding="utf-8")))
+    )
+    assert restated == [], f"row level security restated on existing tables: {restated}"
+
+
+def test_later_migrations_revoke_only_when_they_create_a_table() -> None:
+    later = migration_files()[1:]
+    restated = sorted(
+        path.name
+        for path in later
+        if REVOKE.search(path.read_text(encoding="utf-8"))
+        and not CREATED.search(path.read_text(encoding="utf-8"))
+    )
+    assert restated == [], f"revokes restated without a new table: {restated}"

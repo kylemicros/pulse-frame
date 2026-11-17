@@ -3,6 +3,7 @@ from contextlib import contextmanager
 
 import psycopg
 from psycopg import sql
+from psycopg.rows import TupleRow
 
 from pulse_frame.store import STORE_SCHEMA
 from pulse_frame.store.connection import connect
@@ -68,11 +69,19 @@ def session_ids() -> list[int]:
     return [row[0] for row in rows]
 
 
+def session_exists(
+    conn: psycopg.Connection[TupleRow], session_id: int, lock: bool = False
+) -> bool:
+    statement = sql.SQL("SELECT 1 FROM {} WHERE id = %s{}").format(
+        SESSIONS, sql.SQL(" FOR NO KEY UPDATE" if lock else "")
+    )
+    return conn.execute(statement, [session_id]).fetchone() is not None
+
+
 def require_session(session_id: int) -> None:
-    statement = sql.SQL("SELECT 1 FROM {} WHERE id = %s").format(SESSIONS)
     with query_errors(), connect() as conn:
-        row = conn.execute(statement, [session_id]).fetchone()
-    if row is None:
+        found = session_exists(conn, session_id)
+    if not found:
         raise session_not_found(session_id)
 
 

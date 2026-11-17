@@ -31,6 +31,7 @@ class FrameResult:
     motion_share: float
     reading: Reading
     patches: dict[str, Patch] = field(default_factory=dict)
+    colours: RegionColours | None = None
 
 
 class FrameProcessor:
@@ -87,6 +88,7 @@ class FrameProcessor:
             motion_share=self._motion.share,
             reading=self._pulse.reading(),
             patches=patches,
+            colours=colours,
         )
 
     def _without_skin(
