@@ -13,8 +13,9 @@ from numpy.typing import NDArray
 from psycopg import sql
 
 from pulse_frame.signal.beats import Interval, IntervalFlag
-from pulse_frame.signal.hrv import HrvTracker
+from pulse_frame.signal.hrv import HrvTracker, alternates
 from pulse_frame.signal.tracker import UPDATE_INTERVAL_MS
+from pulse_frame.store.recording import frame_samples
 from pulse_frame.tools import replay
 from pulse_frame.tools.sessions import SANDBOX_UNSUPPORTED_ACTION
 from tests.database import (
@@ -275,6 +276,17 @@ def newest_accepted_gap_ms(url: str, session_id: int, recording: Recording) -> f
     return newest_sample_ms(recording) - max(ends)
 
 
+def assert_minute_does_not_alternate(
+    url: str, session_id: int, recording: Recording
+) -> None:
+    replayed = replay.replay_samples(frame_samples(session_id))
+    span = replay.newest_span(replayed.intervals, replayed.newest_ms)
+    assert as_rows(span) == minute_rows(url, session_id, recording), (
+        "the rebuilt minute differs from the stored minute"
+    )
+    assert not alternates(span), "the minute alternates, so that gate may blank it"
+
+
 def update_times(sample_times: list[int]) -> set[int]:
     updates: set[int] = set()
     next_ms = sample_times[0] + UPDATE_INTERVAL_MS
@@ -358,7 +370,7 @@ def test_summary_gives_bpm_rmssd_and_sdnn_of_the_newest_minute_near_the_truth(
 
 @pytest.mark.parametrize("bpm", WAVE_RATES_BPM)
 @pytest.mark.parametrize("seed", WAVE_SEEDS)
-def test_a_minute_failing_the_tracker_gates_prints_no_bpm_rmssd_or_sdnn(
+def test_a_minute_that_alternates_prints_no_bpm_rmssd_or_sdnn(
     store_url: str, capsys: pytest.CaptureFixture[str], bpm: float, seed: int
 ) -> None:
     shape = late_wave_blood_volume(
@@ -397,6 +409,7 @@ def test_a_minute_gone_stale_prints_no_bpm_rmssd_or_sdnn(
     assert_floor_holds(store_url, session_id, recording)
     assert_rejected_share_holds(store_url, session_id, recording)
     assert newest_accepted_gap_ms(store_url, session_id, recording) > STALE_MS
+    assert_minute_does_not_alternate(store_url, session_id, recording)
     assert fields["bpm"] == "-"
     assert fields["rmssd"] == "-"
     assert fields["sdnn"] == "-"
@@ -464,6 +477,7 @@ def test_a_minute_over_the_rejected_share_prints_no_bpm_rmssd_or_sdnn(
     fields = summary(capsys.readouterr().out)
     assert_floor_holds(store_url, session_id, recording)
     assert newest_accepted_gap_ms(store_url, session_id, recording) <= STALE_MS
+    assert_minute_does_not_alternate(store_url, session_id, recording)
     assert fields["bpm"] == "-"
     assert fields["rmssd"] == "-"
     assert fields["sdnn"] == "-"
