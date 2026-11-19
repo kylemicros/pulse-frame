@@ -7,12 +7,20 @@ from numpy.typing import NDArray
 
 from pulse_frame.platform.errors import SandboxError
 from pulse_frame.platform.sandbox import apply_loopback_sandbox
-from pulse_frame.signal.beats import Interval, IntervalFlag
+from pulse_frame.signal.beats import (
+    MIN_SNR_CYCLES,
+    SNR_FLOOR_DB,
+    Interval,
+    IntervalFlag,
+)
 from pulse_frame.signal.errors import SignalError
 from pulse_frame.signal.hrv import (
     HrvReading,
     HrvTracker,
+    WindowCheck,
     alternates,
+    checks_between,
+    clears_reading_floor,
     is_stale,
     too_many_rejected,
     touching_runs,
@@ -49,6 +57,12 @@ SAMPLE_HOLE_MS = 100.0
 SUMMARY_SPAN_MS = 60_000.0
 SUMMARY_MIN_ACCEPTED_MS = 45_000.0
 UNSET = "-"
+WEAK_WINDOW_SHARE = 0.5
+WEAK_SIGNAL_ACTION = (
+    "Light the face evenly and brightly, for example facing a window or a lamp,"
+    " keep still, and turn off the camera's auto exposure if it has that"
+    f" setting, then record a new session with `{CAPTURE_COMMAND}`."
+)
 SANDBOX_FAILED_ACTION = (
     "Outbound network could not be limited to this machine, so the store was"
     " not opened and nothing was read or written. Check that this is macOS with"
@@ -62,6 +76,7 @@ class ReplayResult:
     intervals: list[Interval]
     readings: list[HrvRow]
     newest_ms: int
+    window_checks: list[WindowCheck]
 
 
 @dataclass(frozen=True)
@@ -131,8 +146,53 @@ def replay(session_id: int) -> int:
         [interval_row(interval) for interval in result.intervals],
         result.readings,
     )
-    write_out(summary_line(session_id, summarise(result)))
+    summary = summarise(result)
+    write_out(summary_line(session_id, summary))
+    notice = weak_notice(result, summary)
+    if notice is not None:
+        report("SIGNAL_TOO_WEAK", notice, WEAK_SIGNAL_ACTION)
     return 0
+
+
+def weak_notice(result: ReplayResult, summary: Summary) -> str | None:
+    checks = newest_checks(result)
+    if summary.count > 0 or not is_too_weak(checks):
+        return None
+    return weak_signal_message(checks)
+
+
+def newest_checks(result: ReplayResult) -> list[WindowCheck]:
+    return checks_between(
+        result.window_checks, result.newest_ms - SUMMARY_SPAN_MS, result.newest_ms
+    )
+
+
+def measured_under_floor(checks: Sequence[WindowCheck]) -> int:
+    return sum(1 for check in checks if check.measured and check.under_floor)
+
+
+def is_too_weak(checks: Sequence[WindowCheck]) -> bool:
+    under = measured_under_floor(checks)
+    return bool(checks) and under > WEAK_WINDOW_SHARE * len(checks)
+
+
+def weak_signal_message(checks: Sequence[WindowCheck]) -> str:
+    under = measured_under_floor(checks)
+    measured = [check.snr_db for check in checks if check.measured]
+    unmeasured = len(checks) - len(measured)
+    median = f", median {float(np.median(measured)):.1f} dB" if measured else ""
+    skipped = (
+        f" {unmeasured} were not measured, being too short to hold"
+        f" {MIN_SNR_CYCLES} beats."
+        if unmeasured
+        else ""
+    )
+    return (
+        f"The newest minute has no accepted beat: {under} of {len(checks)} analysis"
+        f" windows were under the pulse quality floor of {SNR_FLOOR_DB:g} dB"
+        f"{median}.{skipped} The pulse in the face colour did not repeat clearly"
+        " enough across the face regions to time beats."
+    )
 
 
 def region_colours(sample: FrameSample) -> RegionColours:
@@ -177,6 +237,7 @@ def replay_samples(samples: Sequence[FrameSample]) -> ReplayResult:
         intervals=[settled[start] for start in sorted(settled)],
         readings=readings,
         newest_ms=samples[-1].t_ms,
+        window_checks=tracker.window_checks(),
     )
 
 
@@ -233,12 +294,15 @@ def summarise(result: ReplayResult) -> Summary:
             accepted_percent=accepted_percent(result.intervals),
         )
     successive = np.diff(touching_runs(span, 2), axis=1)
+    variability = clears_reading_floor(newest_checks(result))
     return Summary(
         bpm=float(60_000.0 / accepted.mean()),
         rmssd_ms=float(np.sqrt(np.mean(np.square(successive))))
-        if successive.size
+        if successive.size and variability
         else None,
-        sdnn_ms=float(np.std(accepted, ddof=1)) if accepted.size > 1 else None,
+        sdnn_ms=float(np.std(accepted, ddof=1))
+        if accepted.size > 1 and variability
+        else None,
         count=int(accepted.size),
         accepted_percent=accepted_percent(result.intervals),
     )
