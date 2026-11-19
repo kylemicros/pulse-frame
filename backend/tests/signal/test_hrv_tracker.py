@@ -8,12 +8,15 @@ from tests.frames import SEED, TRUE_BPM
 from tests.signal.beat_synthetic import (
     RESPIRATION_HZ,
     TRACKER_NOISE_SD,
+    asymmetric_blood_volume,
     beat_recording,
     beats_inside,
     nearest_errors,
     physical_recording,
     rmssd,
+    rounded_blood_volume,
     sdnn,
+    systolic_midpoints,
 )
 from tests.signal.hrv_tracking import (
     accepted,
@@ -47,7 +50,8 @@ SIGN_RATES_BPM = [50.0, 60.0]
 SUITE_NOISE_SD = 0.05
 NOISE_DOMINATED_TOLERANCE_MS = 15.0
 SWEEP_TOLERANCE_MS = {50.0: 5.0, 60.0: 3.0, 110.0: 3.0}
-PEAK_OFFSET_LIMIT_MS = 40.0
+MIDPOINT_OFFSET_LIMIT_MS = 20.0
+PEAK_CLEARANCE_MS = 50.0
 TOO_FAST_BPM = 200.0
 EDGE_MS = 3_000.0
 UPDATE_MS = 1_000.0
@@ -86,7 +90,7 @@ def test_ninety_seconds_of_clean_pulse_give_rmssd_and_sdnn_near_the_truth(
     feed(tracker, recording)
 
     kept = accepted(tracker.intervals())
-    truth = true_ibis_over(beats, kept)
+    truth = true_ibis_over(systolic_midpoints(beats, rounded_blood_volume), kept)
     reading = tracker.reading()
     assert len(kept) >= ACCEPTED_SHARE * truth.size
     assert reading.rmssd_ms == pytest.approx(rmssd(truth), abs=HRV_TOLERANCE_MS)
@@ -104,21 +108,27 @@ def test_more_blood_less_light_pulse_at_suite_noise_gives_hrv_near_the_truth(
 
     reading = tracked(recording).reading()
 
-    rmssd_error, sdnn_error = hrv_errors(reading, true_ibis_inside(recording, beats))
+    rmssd_error, sdnn_error = hrv_errors(
+        reading, true_ibis_inside(recording, beats, asymmetric_blood_volume)
+    )
     assert rmssd_error <= NOISE_DOMINATED_TOLERANCE_MS
     assert sdnn_error <= NOISE_DOMINATED_TOLERANCE_MS
 
 
 @pytest.mark.parametrize("bpm", SIGN_RATES_BPM)
-def test_beats_sit_on_the_blood_volume_peak_not_the_pulse_foot(bpm: float) -> None:
+def test_beats_sit_on_the_middle_of_the_systolic_upstroke_not_the_peak(
+    bpm: float,
+) -> None:
     recording, beats = physical_recording(
         bpm, SEED, PHYSICAL_S, noise_sd=TRACKER_NOISE_SD
     )
+    midpoints = systolic_midpoints(beats, asymmetric_blood_volume)
 
     found = beat_times(accepted(tracked(recording).intervals()))
 
     assert found.size > 0.8 * PHYSICAL_S * bpm / 60.0
-    assert abs(np.median(nearest_errors(beats, found))) <= PEAK_OFFSET_LIMIT_MS
+    assert abs(np.median(nearest_errors(midpoints, found))) <= MIDPOINT_OFFSET_LIMIT_MS
+    assert np.median(np.abs(nearest_errors(beats, found))) >= PEAK_CLEARANCE_MS
 
 
 @pytest.mark.parametrize("bpm", list(SWEEP_TOLERANCE_MS))
@@ -132,7 +142,9 @@ def test_rmssd_and_sdnn_near_the_truth_from_fifty_to_one_hundred_ten_bpm(
 
     reading = tracked(recording).reading()
 
-    rmssd_error, sdnn_error = hrv_errors(reading, true_ibis_inside(recording, beats))
+    rmssd_error, sdnn_error = hrv_errors(
+        reading, true_ibis_inside(recording, beats, asymmetric_blood_volume)
+    )
     assert rmssd_error <= SWEEP_TOLERANCE_MS[bpm]
     assert sdnn_error <= SWEEP_TOLERANCE_MS[bpm]
 
@@ -148,7 +160,9 @@ def test_forty_bpm_breathing_at_a_quarter_hertz_still_gives_a_reading(
 
     reading = tracked(recording).reading()
 
-    rmssd_error, sdnn_error = hrv_errors(reading, true_ibis_inside(recording, beats))
+    rmssd_error, sdnn_error = hrv_errors(
+        reading, true_ibis_inside(recording, beats, asymmetric_blood_volume)
+    )
     assert rmssd_error <= SLOW_TOLERANCE_MS
     assert sdnn_error <= SLOW_TOLERANCE_MS
 
@@ -321,7 +335,7 @@ def test_every_accepted_beat_sits_where_the_settled_signal_puts_it() -> None:
 
     found = beat_times(accepted(tracked(recording).intervals()))
 
-    errors = nearest_errors(beats, found)
+    errors = nearest_errors(systolic_midpoints(beats, asymmetric_blood_volume), found)
     deviation = np.abs(errors - np.median(errors))
     assert found.size > 0.8 * DURATION_S * SETTLING_BPM / 60.0
     assert float(deviation.max()) <= SETTLED_DEVIATION_MS

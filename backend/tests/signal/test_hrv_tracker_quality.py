@@ -90,18 +90,17 @@ def test_a_zero_spread_region_never_leaves_a_reading_from_beats_over_ten_s_old()
 def test_a_two_peak_pulse_gives_no_reading_or_one_near_the_truth(
     bpm: float, at: float, height: float, seed: int
 ) -> None:
+    shape = two_peak_blood_volume(height, at)
     recording, beats = physical_recording(
-        bpm,
-        SEED + seed,
-        TWO_PEAK_S,
-        noise_sd=TRACKER_NOISE_SD,
-        shape=two_peak_blood_volume(height, at),
+        bpm, SEED + seed, TWO_PEAK_S, noise_sd=TRACKER_NOISE_SD, shape=shape
     )
 
     reading = tracked(recording).reading()
 
     assert_null_or_near(
-        reading, true_ibis_inside(recording, beats), TWO_PEAK_TOLERANCE_MS[bpm]
+        reading,
+        true_ibis_inside(recording, beats, shape),
+        TWO_PEAK_TOLERANCE_MS[bpm],
     )
 
 
@@ -111,18 +110,17 @@ def test_a_two_peak_pulse_gives_no_reading_or_one_near_the_truth(
 def test_a_two_peak_pulse_at_suite_noise_gives_no_reading_or_one_near_the_truth(
     bpm: float, height: float, seed: int
 ) -> None:
+    shape = two_peak_blood_volume(height, NOISY_TWO_PEAK_AT_CYCLE)
     recording, beats = physical_recording(
-        bpm,
-        SEED + seed,
-        TWO_PEAK_S,
-        noise_sd=SUITE_NOISE_SD,
-        shape=two_peak_blood_volume(height, NOISY_TWO_PEAK_AT_CYCLE),
+        bpm, SEED + seed, TWO_PEAK_S, noise_sd=SUITE_NOISE_SD, shape=shape
     )
 
     reading = tracked(recording).reading()
 
     assert_null_or_near(
-        reading, true_ibis_inside(recording, beats), NOISE_DOMINATED_TOLERANCE_MS
+        reading,
+        true_ibis_inside(recording, beats, shape),
+        NOISE_DOMINATED_TOLERANCE_MS,
     )
 
 
