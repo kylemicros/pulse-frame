@@ -305,18 +305,24 @@ def red_noise_channels(rng: np.random.Generator, count: int) -> NDArray[np.float
     return np.column_stack([red_noise(rng, count) for _ in range(3)])
 
 
-def in_band_sd(values: NDArray[np.float64]) -> NDArray[np.float64]:
+def in_band(values: NDArray[np.float64]) -> NDArray[np.float64]:
     sections = butter(BAND_ORDER, BAND_EDGES_HZ, btype="bandpass", fs=FPS, output="sos")
-    return np.asarray(sosfiltfilt(sections, values, axis=0).std(axis=0))
+    return sosfiltfilt(sections, values, axis=0)
 
 
-def region_red_noise(rng: np.random.Generator, count: int) -> NDArray[np.float64]:
+def in_band_sd(values: NDArray[np.float64]) -> NDArray[np.float64]:
+    return np.asarray(in_band(values).std(axis=0))
+
+
+def region_red_noise(
+    rng: np.random.Generator, count: int, shared_share: float = RED_NOISE_SHARED
+) -> NDArray[np.float64]:
     shared = red_noise_channels(rng, count)
     regions = []
     for _ in range(REGION_COUNT):
         mixed = (
-            np.sqrt(1.0 - RED_NOISE_SHARED) * red_noise_channels(rng, count)
-            + np.sqrt(RED_NOISE_SHARED) * shared
+            np.sqrt(1.0 - shared_share) * red_noise_channels(rng, count)
+            + np.sqrt(shared_share) * shared
         )
         scaled = mixed / in_band_sd(mixed) * RED_NOISE_LEVEL
         white = (
@@ -348,13 +354,14 @@ def red_noise_recording(
     depth: float = RED_PULSE_DEPTH,
     harmonic_ratio: float = RED_HARMONIC_RATIOS[0],
     duration_s: float = 20.4,
+    shared_share: float = RED_NOISE_SHARED,
 ) -> Recording:
     rng = np.random.default_rng(seed)
     timestamps = webcam_timestamps(rng, duration_s)
     seconds = (timestamps - timestamps[0]) / 1000.0
     wave = wandering_pulse(rng, seconds, bpm, harmonic_ratio)
     pulse = depth * np.outer(wave, RED_PULSE_SIGNATURE)
-    noise = region_red_noise(rng, timestamps.size)
+    noise = region_red_noise(rng, timestamps.size, shared_share)
     return Recording(timestamps, RED_SKIN_DC * (1.0 + pulse[:, None, :] + noise))
 
 

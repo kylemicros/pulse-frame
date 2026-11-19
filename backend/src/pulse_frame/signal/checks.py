@@ -18,6 +18,16 @@ def check_sample_rate(fs_hz: float) -> None:
         )
 
 
+def check_rate(rate_hz: float, highest_hz: float) -> None:
+    if not math.isfinite(rate_hz) or not 0.0 < rate_hz <= highest_hz:
+        raise SignalError(
+            "BAD_RATE",
+            f"The pulse rate must be a positive finite number up to {highest_hz:g} Hz,"
+            f" got {rate_hz}, so it cannot set the beat spacing and the guide band.",
+            "Pass the spectral pulse rate in hertz, for example 1.2 for 72 BPM.",
+        )
+
+
 def check_band(fs_hz: float, low_hz: float, high_hz: float) -> None:
     if not 0.0 < low_hz < high_hz < fs_hz / 2.0:
         raise SignalError(

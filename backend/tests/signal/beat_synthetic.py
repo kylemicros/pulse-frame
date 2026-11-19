@@ -1,14 +1,12 @@
 from collections.abc import Callable, Sequence
+from itertools import pairwise
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import PchipInterpolator
-from scipy.signal import butter, sosfiltfilt
 
 from pulse_frame.signal.beats import Interval, IntervalFlag
 from tests.signal.synthetic import (
-    BAND_EDGES_HZ,
-    BAND_ORDER,
     CLOCK_START_MS,
     FPS,
     HARMONIC_RATIO,
@@ -16,6 +14,7 @@ from tests.signal.synthetic import (
     NOISE_SD,
     REGION_DC,
     Recording,
+    in_band,
     skin_rgb_from_wave,
     webcam_timestamps,
 )
@@ -28,7 +27,6 @@ SWING_SHARE = 0.06
 BEAT_LEAD_MS = 3_000.0
 SECOND_HARMONIC = 0.2
 FRAME_MS = 1000.0 / FPS
-LATE_LABEL_MAX_MS = 1000.0 / 30.0
 TRACKER_NOISE_SD = 0.01
 UPSTROKE_SHARE = 0.18
 DECAY_SHARE = 0.3
@@ -37,6 +35,7 @@ DIASTOLIC_BUMP_AT = 0.45
 DIASTOLIC_BUMP_WIDTH = 0.12
 SYSTOLIC_WIDTH = 0.07
 DIASTOLIC_WAVE_WIDTH = 0.1
+MIDPOINT_GRID_MS = 0.25
 SUITE_PULSE_SD = float(np.sqrt(0.5 * (1.0 + HARMONIC_RATIO**2)))
 
 
@@ -59,22 +58,10 @@ def known_beats(
     return np.array(beats)
 
 
-def ppg_wave(
-    times_ms: NDArray[np.float64], beats_ms: NDArray[np.float64]
-) -> NDArray[np.float64]:
-    return rounded_blood_volume(beat_cycles(times_ms, beats_ms))
-
-
 def frame_times(
     duration_s: float, start_ms: float = CLOCK_START_MS
 ) -> NDArray[np.float64]:
     return start_ms + np.arange(int(duration_s * FPS)) * FRAME_MS
-
-
-def late_labels(
-    rng: np.random.Generator, times_ms: NDArray[np.float64]
-) -> NDArray[np.float64]:
-    return times_ms + rng.uniform(0.0, LATE_LABEL_MAX_MS, times_ms.size)
 
 
 def beats_inside(
@@ -88,10 +75,6 @@ def nearest_errors(
 ) -> NDArray[np.float64]:
     nearest = np.abs(found_ms[None, :] - truth_ms[:, None]).argmin(axis=1)
     return found_ms[nearest] - truth_ms
-
-
-def ibi_rmse(errors_ms: NDArray[np.float64]) -> float:
-    return float(np.sqrt(np.mean(np.diff(errors_ms) ** 2)))
 
 
 def rmssd(ibis_ms: Sequence[float]) -> float:
@@ -118,8 +101,7 @@ def chain(
 def in_band_noise(
     rng: np.random.Generator, count: int, sd: float
 ) -> NDArray[np.float64]:
-    sections = butter(BAND_ORDER, BAND_EDGES_HZ, btype="bandpass", fs=FPS, output="sos")
-    noise = sosfiltfilt(sections, rng.standard_normal(count))
+    noise = in_band(rng.standard_normal(count))
     return sd * noise / noise.std()
 
 
@@ -229,3 +211,24 @@ def beat_recording(
     return physical_recording(
         bpm, seed, duration_s, noise_sd=noise_sd, shape=rounded_blood_volume
     )
+
+
+def systolic_midpoints(
+    beats_ms: NDArray[np.float64], shape: BloodVolume
+) -> NDArray[np.float64]:
+    grid = np.arange(beats_ms[0], beats_ms[-1] + MIDPOINT_GRID_MS, MIDPOINT_GRID_MS)
+    blood = shape(beat_cycles(grid, beats_ms))
+    midpoints = []
+    for previous_ms, beat_ms in pairwise(beats_ms):
+        rising = (grid >= 0.5 * (previous_ms + beat_ms)) & (grid <= beat_ms)
+        times = grid[rising]
+        values = blood[rising]
+        foot = int(np.argmin(values))
+        level = 0.5 * (values[foot] + values[foot:].max())
+        above = foot + int(np.argmax(values[foot:] >= level))
+        midpoints.append(
+            np.interp(
+                level, values[above - 1 : above + 1], times[above - 1 : above + 1]
+            ),
+        )
+    return np.array(midpoints)

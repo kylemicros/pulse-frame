@@ -8,10 +8,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from pulse_frame.signal.beats import (
-    MAX_IBI_MS,
+    SNR_FLOOR_DB,
     Interval,
-    detect_beats,
+    cross_region_snr_db,
     label_intervals,
+    rate_band,
+    rate_guided_beats,
 )
 from pulse_frame.signal.checks import (
     check_region_colour,
@@ -19,10 +21,17 @@ from pulse_frame.signal.checks import (
     check_timestamp,
     check_tracker_sample_rate,
 )
-from pulse_frame.signal.cross import unit_variance
+from pulse_frame.signal.cross import (
+    band_peak_index,
+    estimate_cross_rate,
+    parabolic_peak_hz,
+    region_spectra,
+    unit_variance,
+)
 from pulse_frame.signal.filters import PASS_HIGH_HZ, PASS_LOW_HZ, bandpass
 from pulse_frame.signal.pos import pos_pulse
 from pulse_frame.signal.resample import resample_uniform
+from pulse_frame.signal.spectrum import MAIN_LOBE_BINS, SEARCH_LOW_HZ
 from pulse_frame.signal.tracker import (
     MAX_GAP_MS,
     MAX_INPUT_FPS,
@@ -44,7 +53,13 @@ ALTERNATION_LIMIT = 0.15
 BLOCK_MS = 25_000.0
 MIN_BLOCK_RUNS = 8
 MIN_SEGMENT_MS = 10_000.0
-SPREAD_LIMIT_MS = 30.0
+MIN_REGION_CORRELATION = 0.5
+MIN_KEPT_REGIONS = 2
+FALLBACK_LOW_HZ = 0.55
+FALLBACK_HIGH_HZ = 3.5
+HALF_RATE_SHARE = 0.2
+PLAUSIBLE_PERIOD_SHARES = (0.6, 1.4)
+READING_FLOOR_DB = 3.0
 
 
 @dataclass(frozen=True)
@@ -58,8 +73,36 @@ class HrvReading:
 NO_HRV = HrvReading(rmssd_ms=None, sdnn_ms=None)
 
 
+@dataclass(frozen=True)
+class WindowCheck:
+    t_ms: float
+    snr_db: float
+
+    @property
+    def under_floor(self) -> bool:
+        return self.snr_db < SNR_FLOOR_DB
+
+    @property
+    def measured(self) -> bool:
+        return math.isfinite(self.snr_db)
+
+
+def clears_reading_floor(checks: Sequence[WindowCheck]) -> bool:
+    if not checks:
+        return False
+    return float(np.median([check.snr_db for check in checks])) >= READING_FLOOR_DB
+
+
+def checks_between(
+    checks: Sequence[WindowCheck], first_ms: float, last_ms: float
+) -> list[WindowCheck]:
+    return [check for check in checks if first_ms <= check.t_ms <= last_ms]
+
+
 def hrv_reading(
-    intervals: Sequence[Interval], newest_sample_ms: float | None = None
+    intervals: Sequence[Interval],
+    newest_sample_ms: float | None = None,
+    window_checks: Sequence[WindowCheck] | None = None,
 ) -> HrvReading:
     if newest_sample_ms is not None:
         check_timestamp(newest_sample_ms)
@@ -74,6 +117,10 @@ def hrv_reading(
         return NO_HRV
     successive = np.diff(touching_runs(window, 2), axis=1)
     if successive.size == 0 or alternates(window):
+        return NO_HRV
+    if window_checks is not None and not clears_reading_floor(
+        checks_between(window_checks, min(i.start_ms for i in window), newest_ms)
+    ):
         return NO_HRV
     return HrvReading(
         rmssd_ms=float(np.sqrt(np.mean(np.square(successive)))),
@@ -146,6 +193,19 @@ def is_stale(window: Sequence[Interval], newest_ms: float) -> bool:
     return not ends or newest_ms - max(ends) > STALE_MS
 
 
+@dataclass(frozen=True)
+class SegmentBeats:
+    first_ms: float
+    last_ms: float
+    beats_ms: NDArray[np.float64]
+    period_ms: float
+    snr_db: float
+
+    @property
+    def is_open(self) -> bool:
+        return math.isinf(self.last_ms)
+
+
 class HrvTracker:
     def __init__(self, fs_hz: float = 30.0) -> None:
         check_sample_rate(fs_hz)
@@ -159,6 +219,7 @@ class HrvTracker:
         self._beats: deque[float] = deque()
         self._committed: deque[Interval] = deque()
         self._pending: list[Interval] = []
+        self._checks: deque[WindowCheck] = deque()
         self._next_update_ms: float | None = None
 
     def add(
@@ -192,9 +253,12 @@ class HrvTracker:
     def settled_intervals(self) -> list[Interval]:
         return list(self._committed)
 
+    def window_checks(self) -> list[WindowCheck]:
+        return list(self._checks)
+
     def reading(self) -> HrvReading:
         newest_ms = self._times[-1] if self._times else None
-        return hrv_reading(self.intervals(), newest_ms)
+        return hrv_reading(self.intervals(), newest_ms, self.window_checks())
 
     def _drop_older_than_analysis(self) -> None:
         oldest_allowed = self._times[-1] - ANALYSIS_MS
@@ -208,11 +272,14 @@ class HrvTracker:
         oldest_kept = self._times[-1] - WINDOW_MS
         while self._committed and self._committed[0].start_ms < oldest_kept:
             self._committed.popleft()
+        while self._checks and self._checks[0].t_ms < oldest_kept:
+            self._checks.popleft()
 
     def _update(self) -> None:
         times = np.array(self._times)
         known = list(self._beats)
         segments = segment_beats(times, np.array(self._colours), self._fs_hz)
+        self._record_checks(float(times[-1]), segments)
         found = np.concatenate([np.empty(0), *(s.beats_ms for s in segments)])
         if known:
             found = found[found > known[-1] + SAME_BEAT_MS]
@@ -224,10 +291,15 @@ class HrvTracker:
             low_quality=np.array(self._low),
             stable_until_ms=stable_until_ms,
         )
-        fresh = reject_region_disagreement(labelled[max(len(known) - 1, 0) :], segments)
+        fresh = flag_implausible(labelled[max(len(known) - 1, 0) :], segments)
         settled = [i for i in fresh if i.end_ms <= stable_until_ms]
         self._commit(settled)
         self._pending = fresh[len(settled) :]
+
+    def _record_checks(self, newest_ms: float, segments: list[SegmentBeats]) -> None:
+        for segment in segments:
+            if segment.is_open:
+                self._checks.append(WindowCheck(t_ms=newest_ms, snr_db=segment.snr_db))
 
     def _commit(self, settled: list[Interval]) -> None:
         for interval in settled:
@@ -235,14 +307,6 @@ class HrvTracker:
                 self._beats.append(interval.start_ms)
             self._beats.append(interval.end_ms)
             self._committed.append(interval)
-
-
-@dataclass(frozen=True)
-class SegmentBeats:
-    first_ms: float
-    last_ms: float
-    beats_ms: NDArray[np.float64]
-    region_beats_ms: tuple[NDArray[np.float64], ...]
 
 
 def segment_beats(
@@ -259,7 +323,14 @@ def segment_beats(
         if pulses is None:
             continue
         grid, regions = pulses
-        beats = detect_beats(grid, -regions.mean(axis=0), fs_hz)
+        agreeing = agreeing_regions(regions, beat_rate_hz(regions, fs_hz), fs_hz)
+        rate_hz = beat_rate_hz(agreeing, fs_hz)
+        snr_db = cross_region_snr_db(agreeing, rate_hz, fs_hz)
+        beats = (
+            rate_guided_beats(grid, agreeing.mean(axis=0), rate_hz, fs_hz)
+            if snr_db >= SNR_FLOOR_DB
+            else np.empty(0)
+        )
         closed = number < len(bounds) - 1
         first_ms = float(span[0]) + EDGE_MS
         last_ms = float(span[-1]) - EDGE_MS if closed else math.inf
@@ -268,10 +339,54 @@ def segment_beats(
                 first_ms=first_ms,
                 last_ms=last_ms,
                 beats_ms=beats[(beats >= first_ms) & (beats <= last_ms)],
-                region_beats_ms=tuple(detect_beats(grid, -r, fs_hz) for r in regions),
+                period_ms=1000.0 / rate_hz,
+                snr_db=snr_db,
             )
         )
     return segments
+
+
+def agreeing_regions(
+    regions: NDArray[np.float64], rate_hz: float, fs_hz: float = 30.0
+) -> NDArray[np.float64]:
+    banded = np.stack([rate_band(region, rate_hz, fs_hz) for region in regions])
+    agrees = np.array(
+        [
+            correlation(region, np.delete(banded, index, axis=0).mean(axis=0))
+            >= MIN_REGION_CORRELATION
+            for index, region in enumerate(banded)
+        ]
+    )
+    if np.count_nonzero(agrees) < MIN_KEPT_REGIONS:
+        return regions
+    return regions[agrees]
+
+
+def correlation(first: NDArray[np.float64], second: NDArray[np.float64]) -> float:
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return float(np.corrcoef(first, second)[0, 1])
+
+
+def beat_rate_hz(regions: NDArray[np.float64], fs_hz: float) -> float:
+    fallback_hz = spectral_rate_hz(regions.mean(axis=0), fs_hz)
+    estimate = estimate_cross_rate(regions, fs_hz)
+    if estimate is None:
+        return fallback_hz
+    if fallback_hz < SEARCH_LOW_HZ and estimate.flank:
+        return fallback_hz
+    return estimate.bpm / 60.0
+
+
+def spectral_rate_hz(pulse: NDArray[np.float64], fs_hz: float) -> float:
+    freqs, spectra = region_spectra(pulse[None, :], fs_hz)
+    power = np.abs(spectra[0]) ** 2
+    band = (freqs >= FALLBACK_LOW_HZ) & (freqs <= FALLBACK_HIGH_HZ)
+    peak = band_peak_index(power, band)
+    half_width_hz = MAIN_LOBE_BINS * fs_hz / pulse.size
+    near_half = band & (np.abs(freqs - freqs[peak] / 2.0) <= half_width_hz)
+    if near_half.any() and power[near_half].max() >= HALF_RATE_SHARE * power[peak]:
+        peak = band_peak_index(power, near_half)
+    return parabolic_peak_hz(freqs, power, peak)
 
 
 def region_pulses(
@@ -290,40 +405,21 @@ def region_pulses(
     return grid, normalised
 
 
-def reject_region_disagreement(
+def flag_implausible(
     intervals: list[Interval], segments: Sequence[SegmentBeats]
 ) -> list[Interval]:
-    starts = np.array([i.start_ms for i in intervals], dtype=np.float64)
-    ends = np.array([i.end_ms for i in intervals], dtype=np.float64)
-    spread = (beat_spreads(starts, segments) > SPREAD_LIMIT_MS) | (
-        beat_spreads(ends, segments) > SPREAD_LIMIT_MS
-    )
     return [
-        replace(i, flag="low_quality") if i.accepted and wide else i
-        for i, wide in zip(intervals, spread, strict=True)
+        replace(i, flag="low_quality")
+        if i.accepted and not is_plausible(i, segments)
+        else i
+        for i in intervals
     ]
 
 
-def beat_spreads(
-    beats_ms: NDArray[np.float64], segments: Sequence[SegmentBeats]
-) -> NDArray[np.float64]:
-    spreads = np.zeros(beats_ms.size)
+def is_plausible(interval: Interval, segments: Sequence[SegmentBeats]) -> bool:
+    shortest, longest = PLAUSIBLE_PERIOD_SHARES
     for segment in segments:
-        inside = (beats_ms >= segment.first_ms) & (beats_ms <= segment.last_ms)
-        offsets = [
-            nearest_offsets(beats_ms[inside], region)
-            for region in segment.region_beats_ms
-        ]
-        spreads[inside] = np.std(offsets, axis=0)
-    return spreads
-
-
-def nearest_offsets(
-    beats_ms: NDArray[np.float64], candidates_ms: NDArray[np.float64]
-) -> NDArray[np.float64]:
-    padded = np.concatenate(([-np.inf], candidates_ms, [np.inf]))
-    after = np.searchsorted(padded, beats_ms)
-    later = padded[after] - beats_ms
-    earlier = padded[after - 1] - beats_ms
-    nearest = np.where(later < -earlier, later, earlier)
-    return np.clip(nearest, -MAX_IBI_MS, MAX_IBI_MS)
+        if segment.first_ms <= interval.end_ms <= segment.last_ms:
+            period_ms = segment.period_ms
+            return shortest * period_ms <= interval.ibi_ms <= longest * period_ms
+    return True

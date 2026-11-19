@@ -6,11 +6,10 @@ import pytest
 from pulse_frame.signal.beats import Interval, IntervalFlag
 from pulse_frame.signal.errors import SignalError
 from pulse_frame.signal.hrv import (
+    READING_FLOOR_DB,
     HrvReading,
-    SegmentBeats,
-    beat_spreads,
+    WindowCheck,
     hrv_reading,
-    nearest_offsets,
 )
 from tests.frames import SEED
 from tests.signal.beat_synthetic import chain, respiring_ibis, rmssd, sdnn
@@ -25,10 +24,13 @@ WINDOW_FILLING_IBIS = 376
 SETTLED_IBIS = 100
 MOTION_IBIS = 18
 EDGE_IBIS = 5
-MAX_IBI_MS = 2_000.0
 ALTERNATING_PAIR_MS = (700.0, 900.0)
 QUIET_BEFORE_ALTERNATION_MS = 30_000.0
 BLOCK_MS = 25_000.0
+NEAR_DB = 1.0
+FAR_DB = 20.0
+MOST_CHECKS = 7
+FEW_CHECKS = 4
 
 
 def flagged(count: int, rejected: int) -> list[IntervalFlag]:
@@ -256,37 +258,6 @@ def test_an_alternating_stretch_of_eight_runs_of_three_nulls() -> None:
     assert_null(hrv_reading(intervals))
 
 
-@pytest.mark.parametrize(
-    ("candidates_ms", "expected_ms"),
-    [([], -MAX_IBI_MS), ([7_000.0], MAX_IBI_MS), ([-4_000.0], -MAX_IBI_MS)],
-    ids=["no_beats", "far_later", "far_earlier"],
-)
-def test_nearest_offsets_are_clipped_to_the_longest_interval(
-    candidates_ms: list[float], expected_ms: float
-) -> None:
-    beats = np.array([0.0, 500.0, 1_000.0])
-
-    offsets = nearest_offsets(beats, np.array(candidates_ms, dtype=np.float64))
-
-    assert offsets.tolist() == [expected_ms] * 3
-
-
-def test_a_region_with_no_beats_gives_a_finite_spread_at_the_clip() -> None:
-    beats = np.array([10_000.0, 10_800.0, 11_600.0])
-    segment = SegmentBeats(
-        first_ms=5_000.0,
-        last_ms=math.inf,
-        beats_ms=beats,
-        region_beats_ms=(beats, beats + 6.0, np.empty(0)),
-    )
-
-    spreads = beat_spreads(beats, [segment])
-
-    expected = float(np.std([0.0, 6.0, -MAX_IBI_MS]))
-    assert np.isfinite(spreads).all()
-    assert spreads.tolist() == pytest.approx([expected] * 3, abs=1e-9)
-
-
 def test_reading_reports_the_span_and_the_accepted_count_it_used() -> None:
     ibis = respiring_ibis(SETTLED_IBIS)
     marks = flagged(len(ibis), 10)
@@ -319,3 +290,57 @@ def test_no_reading_carries_no_window_and_no_accepted_count() -> None:
     assert_null(reading)
     assert reading.window_ms is None
     assert reading.accepted_count is None
+
+
+def checks_across(
+    intervals: list[Interval], offsets_db: list[float]
+) -> list[WindowCheck]:
+    times = np.linspace(intervals[0].start_ms, intervals[-1].end_ms, len(offsets_db))
+    return [
+        WindowCheck(t_ms=float(t_ms), snr_db=READING_FLOOR_DB + offset_db)
+        for t_ms, offset_db in zip(times, offsets_db, strict=True)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("offsets_db", "shown"),
+    [
+        ([-NEAR_DB] * MOST_CHECKS + [FAR_DB] * FEW_CHECKS, False),
+        ([-FAR_DB] * FEW_CHECKS + [NEAR_DB] * MOST_CHECKS, True),
+    ],
+    ids=["median_under_mean_over", "median_over_mean_under"],
+)
+def test_a_reading_needs_the_median_window_snr_at_the_reading_floor(
+    offsets_db: list[float], shown: bool
+) -> None:
+    intervals = chain(respiring_ibis(SETTLED_IBIS))
+    assert (float(np.mean(offsets_db)) >= 0.0) is not shown
+
+    reading = hrv_reading(intervals, window_checks=checks_across(intervals, offsets_db))
+
+    assert (reading.rmssd_ms is not None) is shown
+    assert (reading.sdnn_ms is not None) is shown
+
+
+def test_window_checks_exactly_at_the_reading_floor_give_the_reading() -> None:
+    intervals = chain(respiring_ibis(SETTLED_IBIS))
+    checks = checks_across(intervals, [0.0] * MOST_CHECKS)
+
+    reading = hrv_reading(intervals, window_checks=checks)
+
+    ibis = [i.ibi_ms for i in intervals]
+    assert reading.rmssd_ms == pytest.approx(rmssd(ibis), abs=FORMULA_TOLERANCE_MS)
+    assert reading.sdnn_ms == pytest.approx(sdnn(ibis), abs=FORMULA_TOLERANCE_MS)
+
+
+@pytest.mark.parametrize(
+    ("snr_db", "measured"),
+    [(-math.inf, False), (math.inf, False), (READING_FLOOR_DB, True), (-FAR_DB, True)],
+    ids=["minus_inf", "plus_inf", "at_the_floor", "far_under"],
+)
+def test_a_window_check_is_measured_only_with_a_finite_snr(
+    snr_db: float, measured: bool
+) -> None:
+    check = WindowCheck(t_ms=0.0, snr_db=snr_db)
+
+    assert check.measured is measured

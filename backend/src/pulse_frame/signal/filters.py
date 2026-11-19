@@ -16,9 +16,10 @@ def bandpass(
     fs_hz: float,
     low_hz: float = PASS_LOW_HZ,
     high_hz: float = PASS_HIGH_HZ,
+    order: int = BUTTERWORTH_ORDER,
 ) -> NDArray[np.float64]:
     samples = np.asarray(x, dtype=np.float64)
-    sos = bandpass_sections(fs_hz, low_hz, high_hz)
+    sos = bandpass_sections(fs_hz, low_hz, high_hz, order)
     check_signal(samples)
     if samples.size < 2:
         return samples - samples.mean() if samples.size else samples.copy()
@@ -28,13 +29,11 @@ def bandpass(
 
 @lru_cache(maxsize=8)
 def bandpass_sections(
-    fs_hz: float, low_hz: float, high_hz: float
+    fs_hz: float, low_hz: float, high_hz: float, order: int = BUTTERWORTH_ORDER
 ) -> NDArray[np.float64]:
     check_sample_rate(fs_hz)
     check_band(fs_hz, low_hz, high_hz)
-    return butter(
-        BUTTERWORTH_ORDER, [low_hz, high_hz], btype="bandpass", fs=fs_hz, output="sos"
-    )
+    return butter(order, [low_hz, high_hz], btype="bandpass", fs=fs_hz, output="sos")
 
 
 def zero_phase_cross_gain(
@@ -43,6 +42,6 @@ def zero_phase_cross_gain(
     low_hz: float = PASS_LOW_HZ,
     high_hz: float = PASS_HIGH_HZ,
 ) -> NDArray[np.float64]:
-    sos = bandpass_sections(fs_hz, low_hz, high_hz)
+    sos = bandpass_sections(fs_hz, low_hz, high_hz, BUTTERWORTH_ORDER)
     _, response = freqz_sos(sos, worN=np.asarray(freqs, dtype=np.float64), fs=fs_hz)
     return np.abs(response) ** 4

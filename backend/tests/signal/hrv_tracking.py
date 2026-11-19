@@ -3,7 +3,14 @@ from numpy.typing import NDArray
 
 from pulse_frame.signal.beats import Interval
 from pulse_frame.signal.hrv import HrvReading, HrvTracker
-from tests.signal.beat_synthetic import beat_cycles, beats_inside, rmssd, sdnn
+from tests.signal.beat_synthetic import (
+    BloodVolume,
+    beat_cycles,
+    beats_inside,
+    rmssd,
+    sdnn,
+    systolic_midpoints,
+)
 from tests.signal.synthetic import Recording
 
 CYCLE_GRID_MS = 0.5
@@ -61,11 +68,12 @@ def cycle_locked_ibi_errors(
 
 
 def true_ibis_inside(
-    recording: Recording, beats_ms: NDArray[np.float64]
+    recording: Recording, beats_ms: NDArray[np.float64], shape: BloodVolume
 ) -> NDArray[np.float64]:
     first_ms = float(recording.timestamps_ms[0]) + TRUTH_MARGIN_MS
     last_ms = float(recording.timestamps_ms[-1]) - TRUTH_MARGIN_MS
-    return np.diff(beats_inside(beats_ms, first_ms, last_ms))
+    midpoints = systolic_midpoints(beats_ms, shape)
+    return np.diff(beats_inside(midpoints, first_ms, last_ms))
 
 
 def is_null(reading: HrvReading) -> bool:

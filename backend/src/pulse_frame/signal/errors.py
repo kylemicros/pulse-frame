@@ -7,6 +7,7 @@ SignalErrorCode = Literal[
     "BAD_SAMPLE_RATE",
     "BAD_BAND",
     "BAD_WINDOW",
+    "BAD_RATE",
 ]
 
 
