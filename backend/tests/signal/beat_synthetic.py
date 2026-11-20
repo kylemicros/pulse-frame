@@ -77,6 +77,10 @@ def nearest_errors(
     return found_ms[nearest] - truth_ms
 
 
+def period_ms(bpm: float) -> float:
+    return 60_000.0 / bpm
+
+
 def rmssd(ibis_ms: Sequence[float]) -> float:
     return float(np.sqrt(np.mean(np.diff(np.asarray(ibis_ms)) ** 2)))
 
@@ -110,6 +114,21 @@ def respiring_ibis(
 ) -> list[float]:
     elapsed_s = np.cumsum(np.full(count, base_ms)) / 1000.0
     return list(base_ms + swing_ms * np.sin(2.0 * np.pi * RESPIRATION_HZ * elapsed_s))
+
+
+def jittered_ibis(
+    rng: np.random.Generator,
+    count: int,
+    base_ms: float,
+    jitter_ms: float,
+    offset_ms: float = 0.0,
+    swing_ms: float = 40.0,
+) -> list[float]:
+    halves = np.where(np.arange(count) % 2 == 0, 0.5, -0.5)
+    breathing = respiring_ibis(count, base_ms=base_ms, swing_ms=swing_ms)
+    true_ibis = np.asarray(breathing) + offset_ms * halves
+    beats = np.concatenate(([0.0], np.cumsum(true_ibis)))
+    return list(np.diff(beats + rng.normal(0.0, jitter_ms, beats.size)))
 
 
 def beat_cycles(

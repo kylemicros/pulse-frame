@@ -22,6 +22,7 @@ from tests.signal.beat_synthetic import (
     in_band_noise,
     known_beats,
     nearest_errors,
+    period_ms,
     reflected_light_wave,
     systolic_midpoints,
     two_peak_blood_volume,
@@ -58,10 +59,6 @@ SPACING_MS = 500.0
 RESPACED_NOISE_SEEDS = [11, 39]
 RESPACED_DIASTOLIC_WAVE = (0.8, 0.35)
 RESPACED_SNR_DB = 0.0
-
-
-def period_ms(bpm: float) -> float:
-    return 60_000.0 / bpm
 
 
 def light_pulse(
