@@ -1,4 +1,5 @@
 import inspect
+import itertools
 import math
 import os
 import re
@@ -17,6 +18,7 @@ from psycopg import sql
 from pulse_frame.signal.beats import SNR_FLOOR_DB, Interval, IntervalFlag
 from pulse_frame.signal.hrv import (
     READING_FLOOR_DB,
+    WINDOW_MS,
     HrvTracker,
     WindowCheck,
     alternates,
@@ -73,6 +75,7 @@ ANCHOR_LEAD_MS = 250
 SUMMARY_SPAN_MS = 60_000.0
 EDGE_MS = 3_000.0
 HRV_TOLERANCE_MS = 3.0
+PRINTED_MS = 0.1
 BPM_TOLERANCE = 1.0
 COUNT_TOLERANCE = 1
 MIN_ACCEPTED_PERCENT = 90.0
@@ -145,7 +148,6 @@ ACCEPTED_IN_MINUTE = 3
 AGGREGATE_NUMBER = r"-?\d+(?:\.\d)?"
 SLOW_START_BPM = 50.0
 SLOW_UNTIL_S = 25.0
-SESSION_APART_FACTOR = 10.0
 HOLE_S = 0.4
 HOLES_AT_S = (50.0, 70.0)
 MOTION_CODE = 1
@@ -165,13 +167,15 @@ FLAG_CODES = {
 REPLAY_TABLES = ("beats", "intervals", "hrv_readings")
 HRV_COLUMNS = ["t_ms", "rmssd_ms", "sdnn_ms", "window_ms", "accepted_count"]
 INTERVAL_COLUMNS = ["t_ms", "interval_ms", "flag"]
-FIELDS = {
-    "bpm": r"\bbpm=(-|\d+(?:\.\d+)?)",
-    "rmssd": r"\brmssd=(-|\d+(?:\.\d+)?)(?: ms)?",
-    "sdnn": r"\bsdnn=(-|\d+(?:\.\d+)?)(?: ms)?",
-    "count": r"\bcount=(-|\d+)",
-    "accepted": r"\baccepted=(-|\d+(?:\.\d+)?)%?",
-}
+PRINTED_VALUE = r"-|\d+\.\d"
+SUMMARY_LINE = (
+    rf"Session (?P<session>\d+) replayed,"
+    rf" newest minute: bpm=(?P<bpm>{PRINTED_VALUE}) count=(?P<count>\d+);"
+    rf" last 5 minutes: rmssd=(?P<rmssd>{PRINTED_VALUE})(?: ms)?"
+    rf" sdnn=(?P<sdnn>{PRINTED_VALUE})(?: ms)?;"
+    rf" whole session: accepted=(?P<accepted>{PRINTED_VALUE})%?$"
+)
+FIELD_NAMES = ("bpm", "count", "rmssd", "sdnn", "accepted")
 SESSION_TOKEN = r"\b[Ss]ession (\d+)\b"
 MAX_LINES = 3
 FRAME_WRITERS = [
@@ -232,18 +236,15 @@ def stored_recording(
 
 
 def summary(out: str) -> dict[str, str]:
-    found = {}
-    for name, pattern in FIELDS.items():
-        matches = re.findall(pattern, out)
-        assert len(matches) == 1, f"`{name}=` appears {len(matches)} times"
-        found[name] = matches[0]
-    return found
+    matches = list(re.finditer(SUMMARY_LINE, out, re.MULTILINE))
+    assert len(matches) == 1, f"the summary line appears {len(matches)} times"
+    return {name: matches[0][name] for name in FIELD_NAMES}
 
 
 def lines_with_other_numbers(out: str) -> int:
-    stripped = out
-    for pattern in [*FIELDS.values(), SESSION_TOKEN]:
-        stripped = re.sub(pattern, "", stripped)
+    stripped = re.sub(
+        SESSION_TOKEN, "", re.sub(SUMMARY_LINE, "", out, flags=re.MULTILINE)
+    )
     return sum(1 for line in stripped.splitlines() if re.search(r"\d", line))
 
 
@@ -270,6 +271,17 @@ def true_ibis_in_summary_span(
     ends = midpoints[1:]
     inside = (ends >= newest_ms - SUMMARY_SPAN_MS) & (ends <= newest_ms - EDGE_MS)
     return np.diff(midpoints)[inside]
+
+
+def touching_ok_steps(rows: list[tuple[object, ...]]) -> list[float]:
+    return [
+        float(str(later[1])) - float(str(earlier[1]))
+        for earlier, later in itertools.pairwise(rows)
+        if earlier[2] == OK_CODE
+        and later[2] == OK_CODE
+        and abs(float(str(later[0])) - float(str(later[1])) - float(str(earlier[0])))
+        <= ROUNDING_MS
+    ]
 
 
 def accepted_in_summary_span(
@@ -394,14 +406,17 @@ def test_replay_reuses_the_output_helpers_of_the_sessions_tool(shared: str) -> N
 
 
 @pytest.mark.parametrize("bpm", list(SWEEP_TOLERANCE_MS))
-def test_summary_gives_bpm_rmssd_and_sdnn_of_the_newest_minute_near_the_truth(
+def test_summary_gives_the_minutes_bpm_and_the_hrv_windows_rmssd_and_sdnn_near_truth(
     store_url: str,
     capsys: pytest.CaptureFixture[str],
     bpm: float,
 ) -> None:
     recording, beats = beat_recording(bpm, SEED, DURATION_S)
     session_id = stored_recording(store_url, recording)
-    truth = true_ibis_in_summary_span(recording, beats)
+    minute_truth = true_ibis_in_summary_span(recording, beats)
+    window_truth = true_ibis_inside(recording, beats, rounded_blood_volume)
+    assert DURATION_S * 1000.0 < WINDOW_MS
+    assert DURATION_S * 1000.0 - SUMMARY_SPAN_MS < SUMMARY_MIN_ACCEPTED_MS
 
     assert replay.main([str(session_id)]) == 0
 
@@ -409,10 +424,10 @@ def test_summary_gives_bpm_rmssd_and_sdnn_of_the_newest_minute_near_the_truth(
     fields = summary(output.out)
     tolerance = SWEEP_TOLERANCE_MS[bpm]
     assert float(fields["bpm"]) == pytest.approx(
-        60_000.0 / truth.mean(), abs=BPM_TOLERANCE
+        60_000.0 / minute_truth.mean(), abs=BPM_TOLERANCE
     )
-    assert float(fields["rmssd"]) == pytest.approx(rmssd(truth), abs=tolerance)
-    assert float(fields["sdnn"]) == pytest.approx(sdnn(truth), abs=tolerance)
+    assert float(fields["rmssd"]) == pytest.approx(rmssd(window_truth), abs=tolerance)
+    assert float(fields["sdnn"]) == pytest.approx(sdnn(minute_truth), abs=tolerance)
     assert float(fields["accepted"]) >= MIN_ACCEPTED_PERCENT
     assert after_sandbox_notice(output.err, action=SANDBOX_UNSUPPORTED_ACTION) == ""
 
@@ -464,10 +479,18 @@ def test_a_minute_gone_stale_prints_no_bpm_rmssd_or_sdnn(
     assert fields["sdnn"] == "-"
 
 
-def test_summary_rmssd_and_sdnn_come_from_the_newest_minute_not_the_whole_session(
+def minute_of_row(row: tuple[object, ...], newest_ms: float) -> int:
+    return int((newest_ms - float(str(row[0]))) // SUMMARY_SPAN_MS)
+
+
+def root_mean_square(steps: list[float]) -> float:
+    return float(np.sqrt(np.mean(np.square(steps))))
+
+
+def test_summary_rmssd_pools_the_whole_short_session_and_sdnn_takes_its_full_minute(
     store_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    recording, beats = beat_recording(TRUE_BPM, SEED, DURATION_S)
+    recording, _ = beat_recording(TRUE_BPM, SEED, DURATION_S)
     slow, _ = beat_recording(SLOW_START_BPM, SEED, DURATION_S)
     early = seconds_of(recording) < SLOW_UNTIL_S
     regions = recording.regions.copy()
@@ -475,19 +498,34 @@ def test_summary_rmssd_and_sdnn_come_from_the_newest_minute_not_the_whole_sessio
     session_id = stored_recording(
         store_url, Recording(recording.timestamps_ms, regions)
     )
-    truth = true_ibis_in_summary_span(recording, beats)
+    newest_ms = newest_sample_ms(recording)
+    assert DURATION_S * 1000.0 < WINDOW_MS
 
     assert replay.main([str(session_id)]) == 0
 
     fields = summary(capsys.readouterr().out)
-    whole = [
+    rows = interval_rows(store_url, session_id)
+    newest_rows = [row for row in rows if minute_of_row(row, newest_ms) == 0]
+    older_ok_ms = sum(
         float(str(row[1]))
-        for row in interval_rows(store_url, session_id)
-        if row[2] == OK_CODE
-    ]
-    assert abs(sdnn(whole) - sdnn(truth)) > SESSION_APART_FACTOR * HRV_TOLERANCE_MS
-    assert float(fields["rmssd"]) == pytest.approx(rmssd(truth), abs=HRV_TOLERANCE_MS)
-    assert float(fields["sdnn"]) == pytest.approx(sdnn(truth), abs=HRV_TOLERANCE_MS)
+        for row in rows
+        if row[2] == OK_CODE and minute_of_row(row, newest_ms) > 0
+    )
+    newest_ok = [float(str(row[1])) for row in newest_rows if row[2] == OK_CODE]
+    whole_ok = [float(str(row[1])) for row in rows if row[2] == OK_CODE]
+    whole_rmssd = root_mean_square(touching_ok_steps(rows))
+    assert abs(sdnn(whole_ok) - sdnn(newest_ok)) > HRV_TOLERANCE_MS
+    assert older_ok_ms < SUMMARY_MIN_ACCEPTED_MS
+    assert sum(newest_ok) >= SUMMARY_MIN_ACCEPTED_MS
+    assert all(
+        abs(newest_ms - float(str(row[0])) - SUMMARY_SPAN_MS) > ROUNDING_MS
+        for row in rows
+    )
+    assert abs(whole_rmssd - root_mean_square(touching_ok_steps(newest_rows))) > (
+        HRV_TOLERANCE_MS
+    )
+    assert float(fields["rmssd"]) == pytest.approx(whole_rmssd, abs=PRINTED_MS)
+    assert float(fields["sdnn"]) == pytest.approx(sdnn(newest_ok), abs=PRINTED_MS)
 
 
 def test_summary_count_is_the_accepted_intervals_of_the_newest_minute(
@@ -749,7 +787,7 @@ def test_stored_sample_holes_keep_hrv_near_the_truth_off_every_accepted_interval
         for k in np.flatnonzero(np.diff(times) > SAMPLE_HOLE_MS)
     ]
     assert len(holes) == len(HOLES_AT_S)
-    truth = true_ibis_in_summary_span(whole, beats)
+    truth = true_ibis_inside(whole, beats, rounded_blood_volume)
 
     assert replay.main([str(session_id)]) == 0
 
@@ -1032,7 +1070,9 @@ def weak_notices(text: str) -> list[str]:
 
 def expected_summary_line(session_id: int) -> str:
     result = replay.replay_samples(frame_samples(session_id))
-    return replay.summary_line(session_id, replay.summarise(result))
+    line = replay.summary_line(session_id, replay.summarise(result))
+    assert re.fullmatch(SUMMARY_LINE, line), "the summary line lost its layout"
+    return line
 
 
 def replay_lines(session_id: int, capsys: pytest.CaptureFixture[str]) -> list[str]:
@@ -1213,7 +1253,7 @@ def test_a_weak_minute_with_some_accepted_beats_gives_no_notice() -> None:
     assert OLD_WORDING not in without_beats
 
 
-def floor_minute(offset_db: float) -> replay.ReplayResult:
+def floor_session(offset_db: float) -> replay.ReplayResult:
     intervals = chain(respiring_ibis(FLOOR_MINUTE_IBIS, TRUE_IBI_MS))
     newest_ms = round(intervals[-1].end_ms + SHARE_NEWEST_AFTER_MS)
     first_ms = newest_ms - SUMMARY_SPAN_MS
@@ -1226,11 +1266,21 @@ def floor_minute(offset_db: float) -> replay.ReplayResult:
     )
 
 
-def test_a_minute_under_the_reading_floor_keeps_its_bpm_but_drops_rmssd_and_sdnn() -> (
+def test_a_67_s_window_with_every_check_under_the_floor_keeps_bpm_but_drops_hrv() -> (
     None
 ):
-    under = replay.summarise(floor_minute(-READING_MARGIN_DB))
-    over = replay.summarise(floor_minute(READING_MARGIN_DB))
+    under_result = floor_session(-READING_MARGIN_DB)
+    intervals = under_result.intervals
+    oldest_ms = under_result.newest_ms - WINDOW_MS
+    assert all(i.start_ms >= oldest_ms for i in intervals)
+    assert all(
+        intervals[0].start_ms <= c.t_ms <= under_result.newest_ms
+        for c in under_result.window_checks
+    )
+    assert all(c.snr_db < READING_FLOOR_DB for c in under_result.window_checks)
+
+    under = replay.summarise(under_result)
+    over = replay.summarise(floor_session(READING_MARGIN_DB))
 
     assert over.rmssd_ms is not None
     assert over.sdnn_ms is not None
