@@ -6,6 +6,7 @@ from itertools import pairwise
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy import stats
 
 from pulse_frame.signal.beats import (
     SNR_FLOOR_DB,
@@ -49,9 +50,12 @@ ANALYSIS_MS = 20_000.0
 EDGE_MS = 3_000.0
 SAME_BEAT_MS = 150.0
 STALE_MS = 10_000.0
-ALTERNATION_LIMIT = 0.15
 BLOCK_MS = 25_000.0
 MIN_BLOCK_RUNS = 8
+MIN_ALTERNATION_MS = 5.0
+ALTERNATION_ALPHA = 0.002
+JITTER_DF_DIVISOR = 2.5
+PAIRED_VARIANCE_SCALE = 64.0 / 70.0
 MIN_SEGMENT_MS = 10_000.0
 MIN_REGION_CORRELATION = 0.5
 MIN_KEPT_REGIONS = 2
@@ -147,13 +151,21 @@ def newest_window(intervals: Sequence[Interval], newest_ms: float) -> list[Inter
     return [i for i in intervals if i.start_ms >= oldest_start_ms]
 
 
-def accepted_runs(window: Sequence[Interval], length: int) -> list[Sequence[Interval]]:
+def numbered_runs(
+    window: Sequence[Interval], length: int
+) -> list[tuple[int, Sequence[Interval]]]:
     return [
-        run
-        for run in (window[k : k + length] for k in range(len(window) - length + 1))
+        (k, run)
+        for k, run in (
+            (k, window[k : k + length]) for k in range(len(window) - length + 1)
+        )
         if all(i.accepted for i in run)
         and all(a.end_ms == b.start_ms for a, b in pairwise(run))
     ]
+
+
+def accepted_runs(window: Sequence[Interval], length: int) -> list[Sequence[Interval]]:
+    return [run for _, run in numbered_runs(window, length)]
 
 
 def run_ibis(runs: Sequence[Sequence[Interval]], length: int) -> NDArray[np.float64]:
@@ -167,20 +179,43 @@ def touching_runs(window: Sequence[Interval], length: int) -> NDArray[np.float64
 
 def alternates(window: Sequence[Interval]) -> bool:
     newest_end_ms = max(i.end_ms for i in window)
-    blocks: defaultdict[int, list[Sequence[Interval]]] = defaultdict(list)
-    for run in accepted_runs(window, 3):
-        blocks[int((newest_end_ms - run[-1].end_ms) // BLOCK_MS)].append(run)
+    blocks: defaultdict[int, list[tuple[int, Sequence[Interval]]]] = defaultdict(list)
+    for k, run in numbered_runs(window, 3):
+        blocks[int((newest_end_ms - run[-1].end_ms) // BLOCK_MS)].append((k, run))
     return any(
-        len(runs) >= MIN_BLOCK_RUNS and swings_back_and_forth(run_ibis(runs, 3))
+        swings_back_and_forth(
+            np.array([k for k, _ in runs]), run_ibis([run for _, run in runs], 3)
+        )
         for runs in blocks.values()
     )
 
 
-def swings_back_and_forth(ibis: NDArray[np.float64]) -> bool:
-    steps = np.diff(ibis, axis=1)
-    together = float(np.sum(np.square(steps[:, 0] + steps[:, 1])))
-    apart = float(np.sum(np.square(steps[:, 0] - steps[:, 1])))
-    return together < ALTERNATION_LIMIT * apart
+def swings_back_and_forth(starts: NDArray[np.int_], ibis: NDArray[np.float64]) -> bool:
+    if starts.size < MIN_BLOCK_RUNS:
+        return False
+    values = alternation_values(starts, ibis)
+    size = abs(float(values.mean()))
+    return size >= MIN_ALTERNATION_MS and size >= significance_limit(
+        values.size
+    ) * alternation_error(values)
+
+
+def alternation_values(
+    starts: NDArray[np.int_], ibis: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    signs = np.where(starts % 2 == 0, 1.0, -1.0)
+    return signs * (ibis[:, 0] - 2.0 * ibis[:, 1] + ibis[:, 2]) / 4.0
+
+
+def alternation_error(values: NDArray[np.float64]) -> float:
+    paired = values[:-1] + values[1:]
+    variance = PAIRED_VARIANCE_SCALE * float(np.var(paired, ddof=1))
+    return math.sqrt(variance / values.size)
+
+
+def significance_limit(run_count: int) -> float:
+    degrees = (run_count - 1) / JITTER_DF_DIVISOR
+    return float(stats.t.ppf(1.0 - ALTERNATION_ALPHA / 2.0, degrees))
 
 
 def too_many_rejected(window: Sequence[Interval], accepted_count: int) -> bool:
