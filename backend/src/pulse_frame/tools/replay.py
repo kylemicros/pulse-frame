@@ -1,4 +1,5 @@
 import argparse
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -15,15 +16,16 @@ from pulse_frame.signal.beats import (
 )
 from pulse_frame.signal.errors import SignalError
 from pulse_frame.signal.hrv import (
+    WINDOW_MS,
     HrvReading,
     HrvTracker,
     WindowCheck,
     alternates,
     checks_between,
-    clears_reading_floor,
+    hrv_reading,
     is_stale,
+    newest_window,
     too_many_rejected,
-    touching_runs,
 )
 from pulse_frame.signal.tracker import UPDATE_INTERVAL_MS, RegionColours
 from pulse_frame.store.errors import StoreError
@@ -56,6 +58,8 @@ FLAG_CODES: dict[IntervalFlag, int] = {
 SAMPLE_HOLE_MS = 100.0
 SUMMARY_SPAN_MS = 60_000.0
 SUMMARY_MIN_ACCEPTED_MS = 45_000.0
+MIN_MINUTE_INTERVALS = 2
+HRV_WINDOW_LABEL = f"last {round(WINDOW_MS / 60_000.0)} minutes"
 UNSET = "-"
 WEAK_WINDOW_SHARE = 0.5
 WEAK_SIGNAL_ACTION = (
@@ -94,9 +98,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         description=(
             "Replay one stored session's frame samples through the HRV tracker,"
             " replace its beats, intervals and HRV readings in the local store,"
-            " and print per-session aggregates only: BPM, RMSSD and SDNN over the"
-            " newest minute with its accepted interval count, and the accepted"
-            " share of intervals."
+            " and print per-session aggregates only: BPM and its accepted interval"
+            " count over the newest minute, RMSSD and SDNN over the"
+            f" {HRV_WINDOW_LABEL}, and the accepted share of intervals."
         ),
     )
     parser.add_argument("session_id", type=int, help="the ID printed by the capture")
@@ -293,19 +297,30 @@ def summarise(result: ReplayResult) -> Summary:
             count=int(accepted.size),
             accepted_percent=accepted_percent(result.intervals),
         )
-    successive = np.diff(touching_runs(span, 2), axis=1)
-    variability = clears_reading_floor(newest_checks(result))
+    reading = hrv_reading(result.intervals, result.newest_ms, result.window_checks)
     return Summary(
         bpm=float(60_000.0 / accepted.mean()),
-        rmssd_ms=float(np.sqrt(np.mean(np.square(successive))))
-        if successive.size and variability
-        else None,
-        sdnn_ms=float(np.std(accepted, ddof=1))
-        if accepted.size > 1 and variability
-        else None,
+        rmssd_ms=reading.rmssd_ms,
+        sdnn_ms=None
+        if reading.sdnn_ms is None
+        else mean_minute_sdnn(result.intervals, result.newest_ms),
         count=int(accepted.size),
         accepted_percent=accepted_percent(result.intervals),
     )
+
+
+def mean_minute_sdnn(intervals: Sequence[Interval], newest_ms: int) -> float | None:
+    minutes: defaultdict[int, list[float]] = defaultdict(list)
+    for interval in newest_window(intervals, newest_ms):
+        if interval.accepted:
+            minute = int((newest_ms - interval.end_ms) // SUMMARY_SPAN_MS)
+            minutes[minute].append(interval.ibi_ms)
+    sdnns = [
+        float(np.std(ibis, ddof=1))
+        for ibis in minutes.values()
+        if len(ibis) >= MIN_MINUTE_INTERVALS and sum(ibis) >= SUMMARY_MIN_ACCEPTED_MS
+    ]
+    return float(np.mean(sdnns)) if sdnns else None
 
 
 def passes_gates(span: Sequence[Interval], accepted_count: int, newest_ms: int) -> bool:
@@ -331,9 +346,10 @@ def summary_line(session_id: int, summary: Summary) -> str:
     return (
         f"Session {session_id} replayed, newest minute:"
         f" bpm={shown(summary.bpm)}"
-        f" rmssd={shown(summary.rmssd_ms, ' ms')}"
-        f" sdnn={shown(summary.sdnn_ms, ' ms')}"
         f" count={summary.count};"
+        f" {HRV_WINDOW_LABEL}:"
+        f" rmssd={shown(summary.rmssd_ms, ' ms')}"
+        f" sdnn={shown(summary.sdnn_ms, ' ms')};"
         f" whole session: accepted={shown(summary.accepted_percent, '%')}"
     )
 
