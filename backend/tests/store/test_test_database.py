@@ -19,6 +19,7 @@ from tests.database import (
     URL_VARIABLE,
     WALL_NS,
     RefusedDatabaseError,
+    apply_migration_files,
     apply_migrations,
     drop_database,
     empty_tables,
@@ -77,6 +78,14 @@ def insert_empty_recording(url: str) -> int:
     return insert_recording(url, WALL_NS, MONOTONIC_NS, [])
 
 
+def insert_counted_recording(url: str) -> int:
+    return insert_recording(url, WALL_NS, MONOTONIC_NS, [], MONOTONIC_NS)
+
+
+def apply_no_migration_files(url: str) -> None:
+    apply_migration_files(url, [])
+
+
 def insert_no_samples(url: str) -> None:
     insert_samples(url, 1, [])
 
@@ -95,12 +104,14 @@ HELPERS = [
             empty_tables,
             seed_session,
             apply_migrations,
+            apply_no_migration_files,
             hide_store,
             restore_store,
             make_read_only,
             make_writable,
             plant_public_default_privileges,
             insert_empty_recording,
+            insert_counted_recording,
             insert_no_samples,
             read_session_rows,
             stored_session_ids,

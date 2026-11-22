@@ -687,7 +687,7 @@ def run_capture_on_the_astronaut(record: Record) -> None:
     capture.monotonic_ns = lambda: CAPTURE_MONOTONIC_NS + clock.now * NS_PER_MS
     capture.time_ns = lambda: CAPTURE_WALL_NS + clock.now * NS_PER_MS
     watch_connections(record, refuse=False)
-    raise SystemExit(capture.main(["--seconds", LIVE_CHECK_SECONDS]))
+    raise SystemExit(capture.main(["--warm-up", "0", "--seconds", LIVE_CHECK_SECONDS]))
 
 
 def scenario_capture(path: Path) -> None:
@@ -711,7 +711,9 @@ def scenario_capture_broken(path: Path, mode: str) -> None:
     break_libsystem(mode)
     write_at_exit(path, record)
     with faked_platform("darwin"):
-        raise SystemExit(capture.main(["--seconds", LIVE_CHECK_SECONDS]))
+        raise SystemExit(
+            capture.main(["--warm-up", "0", "--seconds", LIVE_CHECK_SECONDS])
+        )
 
 
 def scenario_capture_unsupported(path: Path) -> None:

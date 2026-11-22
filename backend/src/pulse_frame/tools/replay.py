@@ -1,4 +1,5 @@
 import argparse
+import math
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -33,8 +34,10 @@ from pulse_frame.store.recording import (
     FrameSample,
     HrvRow,
     IntervalRow,
+    SessionClock,
     frame_samples,
     replace_replay,
+    session_clock,
 )
 from pulse_frame.store.sessions import SESSIONS_COMMAND
 from pulse_frame.tools.sessions import (
@@ -57,9 +60,12 @@ FLAG_CODES: dict[IntervalFlag, int] = {
 }
 SAMPLE_HOLE_MS = 100.0
 SUMMARY_SPAN_MS = 60_000.0
+MS_PER_S = 1_000.0
 SUMMARY_MIN_ACCEPTED_MS = 45_000.0
 MIN_MINUTE_INTERVALS = 2
 HRV_WINDOW_LABEL = f"last {round(WINDOW_MS / 60_000.0)} minutes"
+WHOLE_SESSION_LABEL = "whole session"
+COUNTED_PART_LABEL = "counted part"
 UNSET = "-"
 WEAK_WINDOW_SHARE = 0.5
 WEAK_SIGNAL_ACTION = (
@@ -100,7 +106,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             " replace its beats, intervals and HRV readings in the local store,"
             " and print per-session aggregates only: BPM and its accepted interval"
             " count over the newest minute, RMSSD and SDNN over the"
-            f" {HRV_WINDOW_LABEL}, and the accepted share of intervals."
+            f" {HRV_WINDOW_LABEL}, and the accepted share of intervals. A session"
+            " captured with a warm-up runs the tracker over every sample but keeps"
+            " only the counted part after the warm-up for the stored rows and the"
+            " aggregates."
         ),
     )
     parser.add_argument("session_id", type=int, help="the ID printed by the capture")
@@ -143,7 +152,11 @@ def replay(session_id: int) -> int:
             f" new one with `{CAPTURE_COMMAND}`.",
         )
         return 1
-    result = replay_samples(samples)
+    clock = session_clock(session_id)
+    if not any(sample.t_ms >= clock.counted_ms for sample in samples):
+        report_no_counted_samples(session_id)
+        return 1
+    result = replay_samples(samples, clock.counted_ms)
     replace_replay(
         session_id,
         beat_times(result.intervals),
@@ -151,11 +164,38 @@ def replay(session_id: int) -> int:
         result.readings,
     )
     summary = summarise(result)
-    write_out(summary_line(session_id, summary))
+    write_out(summary_line(session_id, summary, counted_span_label(clock, result)))
     notice = weak_notice(result, summary)
     if notice is not None:
         report("SIGNAL_TOO_WEAK", notice, WEAK_SIGNAL_ACTION)
     return 0
+
+
+def report_no_counted_samples(session_id: int) -> None:
+    report(
+        "NO_COUNTED_SAMPLES",
+        f"Session {session_id} holds no frame sample after its warm-up, so there"
+        " is no counted part to replay and nothing was written. The capture"
+        " stopped before the warm-up ended, or saw no usable face after it.",
+        f"Delete the session with `{SESSIONS_COMMAND} delete {session_id}` in"
+        " backend/ if you no longer need it, then record a new one with"
+        f" `{CAPTURE_COMMAND}`, let it run past the warm-up bell and keep your"
+        " face in view until the closing bell.",
+    )
+
+
+def counted_span_label(clock: SessionClock, result: ReplayResult) -> str | None:
+    if not clock.warmed_up:
+        return None
+    span_ms = min(float(result.newest_ms - clock.counted_ms), WINDOW_MS)
+    if span_ms < SUMMARY_SPAN_MS:
+        return f"counted {half_up(span_ms / MS_PER_S)} seconds"
+    minutes = half_up(span_ms / SUMMARY_SPAN_MS)
+    return f"counted {minutes} minute{'' if minutes == 1 else 's'}"
+
+
+def half_up(value: float) -> int:
+    return math.floor(value + 0.5)
 
 
 def weak_notice(result: ReplayResult, summary: Summary) -> str | None:
@@ -216,7 +256,7 @@ def beside_holes(samples: Sequence[FrameSample]) -> NDArray[np.bool_]:
     return low
 
 
-def replay_samples(samples: Sequence[FrameSample]) -> ReplayResult:
+def replay_samples(samples: Sequence[FrameSample], counted_ms: int = 0) -> ReplayResult:
     tracker = HrvTracker()
     settled: dict[float, Interval] = {}
     readings: list[HrvRow] = []
@@ -233,15 +273,35 @@ def replay_samples(samples: Sequence[FrameSample]) -> ReplayResult:
         elif sample.t_ms >= next_update_ms:
             next_update_ms = sample.t_ms + UPDATE_INTERVAL_MS
             keep(settled, tracker.settled_intervals())
-            row = hrv_row(sample.t_ms, tracker.reading())
+            row = hrv_row(
+                sample.t_ms, counted_reading(tracker, sample.t_ms, counted_ms)
+            )
             if row is not None:
                 readings.append(row)
     keep(settled, tracker.intervals())
     return ReplayResult(
-        intervals=[settled[start] for start in sorted(settled)],
+        intervals=counted_intervals(
+            [settled[start] for start in sorted(settled)], counted_ms
+        ),
         readings=readings,
         newest_ms=samples[-1].t_ms,
-        window_checks=tracker.window_checks(),
+        window_checks=counted_checks(tracker.window_checks(), counted_ms),
+    )
+
+
+def counted_intervals(intervals: Sequence[Interval], counted_ms: int) -> list[Interval]:
+    return [i for i in intervals if i.start_ms >= counted_ms]
+
+
+def counted_checks(checks: Sequence[WindowCheck], counted_ms: int) -> list[WindowCheck]:
+    return [check for check in checks if check.t_ms >= counted_ms]
+
+
+def counted_reading(tracker: HrvTracker, t_ms: int, counted_ms: int) -> HrvReading:
+    return hrv_reading(
+        counted_intervals(tracker.intervals(), counted_ms),
+        t_ms,
+        tracker.window_checks(),
     )
 
 
@@ -342,15 +402,22 @@ def shown(value: float | None, unit: str = "") -> str:
     return UNSET if value is None else f"{value:.1f}{unit}"
 
 
-def summary_line(session_id: int, summary: Summary) -> str:
+def summary_line(
+    session_id: int, summary: Summary, counted_label: str | None = None
+) -> str:
+    hrv_label, share_label = (
+        (HRV_WINDOW_LABEL, WHOLE_SESSION_LABEL)
+        if counted_label is None
+        else (counted_label, COUNTED_PART_LABEL)
+    )
     return (
         f"Session {session_id} replayed, newest minute:"
         f" bpm={shown(summary.bpm)}"
         f" count={summary.count};"
-        f" {HRV_WINDOW_LABEL}:"
+        f" {hrv_label}:"
         f" rmssd={shown(summary.rmssd_ms, ' ms')}"
         f" sdnn={shown(summary.sdnn_ms, ' ms')};"
-        f" whole session: accepted={shown(summary.accepted_percent, '%')}"
+        f" {share_label}: accepted={shown(summary.accepted_percent, '%')}"
     )
 
 

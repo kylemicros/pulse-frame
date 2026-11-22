@@ -31,7 +31,9 @@ SAMPLE_COLUMNS = ("t_ms", *COLOUR_COLUMNS, "moving")
 BEAT_COLUMNS = ("t_ms",)
 INTERVAL_COLUMNS = ("t_ms", "interval_ms", "flag")
 HRV_COLUMNS = ("t_ms", "rmssd_ms", "sdnn_ms", "window_ms", "accepted_count")
-SESSION_COLUMNS = ("started_wall_ns", "started_monotonic_ns")
+SESSION_COLUMNS = ("started_wall_ns", "started_monotonic_ns", "counted_monotonic_ns")
+CLOCK_COLUMNS = ("started_monotonic_ns", "counted_monotonic_ns")
+NS_PER_MS = 1_000_000
 REPLAY_TABLES = ("beats", "intervals", "hrv_readings")
 
 
@@ -58,6 +60,20 @@ class HrvRow:
     sdnn_ms: float
     window_ms: float
     accepted_count: int
+
+
+@dataclass(frozen=True)
+class SessionClock:
+    anchor_ns: int
+    counted_ns: int
+
+    @property
+    def counted_ms(self) -> int:
+        return self.counted_ns // NS_PER_MS
+
+    @property
+    def warmed_up(self) -> bool:
+        return self.counted_ns > self.anchor_ns
 
 
 def store_table(name: str) -> sql.Identifier:
@@ -183,13 +199,15 @@ class SessionWriter:
     def __init__(self, conn: Connection) -> None:
         self._conn = conn
 
-    def create_session(self, started_wall_ns: int, started_monotonic_ns: int) -> int:
-        statement = sql.SQL("INSERT INTO {} ({}) VALUES (%s, %s) RETURNING id").format(
-            SESSIONS, column_list(SESSION_COLUMNS)
-        )
+    def create_session(
+        self, started_wall_ns: int, started_monotonic_ns: int, counted_monotonic_ns: int
+    ) -> int:
+        statement = sql.SQL(
+            "INSERT INTO {} ({}) VALUES (%s, %s, %s) RETURNING id"
+        ).format(SESSIONS, column_list(SESSION_COLUMNS))
         with query_errors(), self._conn.transaction():
             row = self._conn.execute(
-                statement, [started_wall_ns, started_monotonic_ns]
+                statement, [started_wall_ns, started_monotonic_ns, counted_monotonic_ns]
             ).fetchone()
         if row is None:
             raise StoreError(
@@ -233,6 +251,18 @@ def frame_samples(session_id: int) -> list[FrameSample]:
             raise session_not_found(session_id) from None
         rows = conn.execute(statement, [session_id], binary=True).fetchall()
     return [sample_from_row(row) for row in rows]
+
+
+def session_clock(session_id: int) -> SessionClock:
+    statement = sql.SQL("SELECT {} FROM {} WHERE id = %s").format(
+        column_list(CLOCK_COLUMNS), SESSIONS
+    )
+    with query_errors(), connect() as conn:
+        row = conn.execute(statement, [session_id]).fetchone()
+    if row is None:
+        raise session_not_found(session_id) from None
+    anchor_ns, counted_ns = row
+    return SessionClock(anchor_ns=anchor_ns, counted_ns=counted_ns)
 
 
 def delete_replay_rows(conn: Connection, session_id: int) -> None:

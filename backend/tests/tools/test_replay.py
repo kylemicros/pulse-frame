@@ -28,10 +28,8 @@ from pulse_frame.store.recording import frame_samples
 from pulse_frame.tools import replay
 from pulse_frame.tools.sessions import SANDBOX_UNSUPPORTED_ACTION
 from tests.database import (
-    COLOUR_COLUMNS,
     SAMPLE_COLUMNS,
     WALL_NS,
-    Row,
     insert_recording,
     rows_under,
     stored_rows,
@@ -65,13 +63,20 @@ from tests.signal.beat_synthetic import (
 from tests.signal.face_synthetic import realistic_face
 from tests.signal.hrv_tracking import seconds_of, true_ibis_inside
 from tests.signal.synthetic import REGION_DC, Recording, region_colours
+from tests.tools.replay_support import (
+    ANCHOR_LEAD_MS,
+    FLAG_CODES,
+    HRV_COLUMNS,
+    SUMMARY_LINE,
+    interval_rows,
+    sample_rows,
+)
 
 DURATION_S = 90.0
 SHORT_S = 30.0
 LONG_S = 330.0
 PROBE_S = 5.0
 NS_PER_MS = 1_000_000
-ANCHOR_LEAD_MS = 250
 SUMMARY_SPAN_MS = 60_000.0
 EDGE_MS = 3_000.0
 HRV_TOLERANCE_MS = 3.0
@@ -155,26 +160,7 @@ LOW_QUALITY_CODE = 3
 EDGE_CODE = 4
 OK_CODE = 0
 INTERRUPTED_EXIT = 130
-FLAG_CODES = {
-    "ok": 0,
-    "motion": 1,
-    "gap": 2,
-    "low_quality": 3,
-    "edge": 4,
-    "out_of_range": 5,
-    "off_median": 6,
-}
 REPLAY_TABLES = ("beats", "intervals", "hrv_readings")
-HRV_COLUMNS = ["t_ms", "rmssd_ms", "sdnn_ms", "window_ms", "accepted_count"]
-INTERVAL_COLUMNS = ["t_ms", "interval_ms", "flag"]
-PRINTED_VALUE = r"-|\d+\.\d"
-SUMMARY_LINE = (
-    rf"Session (?P<session>\d+) replayed,"
-    rf" newest minute: bpm=(?P<bpm>{PRINTED_VALUE}) count=(?P<count>\d+);"
-    rf" last 5 minutes: rmssd=(?P<rmssd>{PRINTED_VALUE})(?: ms)?"
-    rf" sdnn=(?P<sdnn>{PRINTED_VALUE})(?: ms)?;"
-    rf" whole session: accepted=(?P<accepted>{PRINTED_VALUE})%?$"
-)
 FIELD_NAMES = ("bpm", "count", "rmssd", "sdnn", "accepted")
 SESSION_TOKEN = r"\b[Ss]ession (\d+)\b"
 MAX_LINES = 3
@@ -208,20 +194,6 @@ LIBRARY_FAILURES = [
 type Session = tuple[int, Recording, NDArray[np.float64]]
 
 
-def sample_rows(recording: Recording, moving: NDArray[np.bool_]) -> list[Row]:
-    times = np.round(recording.timestamps_ms).astype(np.int64)
-    return [
-        {
-            "t_ms": int(t_ms),
-            **dict(
-                zip(COLOUR_COLUMNS, (float(v) for v in frame.reshape(9)), strict=True)
-            ),
-            "moving": bool(is_moving),
-        }
-        for t_ms, frame, is_moving in zip(times, recording.regions, moving, strict=True)
-    ]
-
-
 def stored_recording(
     url: str, recording: Recording, moving: NDArray[np.bool_] | None = None
 ) -> int:
@@ -253,10 +225,6 @@ def beat_times(url: str, session_id: int) -> NDArray[np.float64]:
         [row[0] for row in stored_rows(url, "beats", session_id, ["t_ms"])],
         dtype=float,
     )
-
-
-def interval_rows(url: str, session_id: int) -> list[tuple[object, ...]]:
-    return stored_rows(url, "intervals", session_id, INTERVAL_COLUMNS)
 
 
 def newest_sample_ms(recording: Recording) -> float:

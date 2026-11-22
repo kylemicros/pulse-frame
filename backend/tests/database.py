@@ -268,6 +268,11 @@ def apply_migrations(url: str) -> None:
             "test database has no tables. Write the session store migration there.",
             pytrace=False,
         )
+    apply_migration_files(url, files)
+
+
+def apply_migration_files(url: str, files: Sequence[Path]) -> None:
+    require_test_url(url)
     with psycopg.connect(url) as conn:
         for path in files:
             conn.execute(sql.SQL(path.read_text(encoding="utf-8")))
@@ -371,17 +376,19 @@ def seed_session(url: str) -> int:
 
 
 def insert_recording(
-    url: str, wall_ns: int, monotonic_ns: int, samples: Sequence[Row]
+    url: str,
+    wall_ns: int,
+    monotonic_ns: int,
+    samples: Sequence[Row],
+    counted_monotonic_ns: int | None = None,
 ) -> int:
     require_test_url(url)
-    session_statement = sql.SQL(
-        "INSERT INTO {} (started_wall_ns, started_monotonic_ns)"
-        " VALUES (%s, %s) RETURNING id"
-    ).format(store_table(SESSION_TABLE))
+    session: Row = {"started_wall_ns": wall_ns, "started_monotonic_ns": monotonic_ns}
+    if counted_monotonic_ns is not None:
+        session["counted_monotonic_ns"] = counted_monotonic_ns
+    columns = store_columns(url)
     with psycopg.connect(url) as conn:
-        row = conn.execute(session_statement, [wall_ns, monotonic_ns]).fetchone()
-        assert row is not None, "inserting a recording's session returned nothing"
-        session_id = row[0]
+        session_id = insert_row(conn, columns, SESSION_TABLE, session, None)
     assert isinstance(session_id, int), f"session IDs are numbers, got {session_id!r}"
     insert_samples(url, session_id, samples)
     return session_id
