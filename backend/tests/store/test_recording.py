@@ -12,6 +12,7 @@ from pulse_frame.store.recording import (
     frame_samples,
     open_writer,
     replace_replay,
+    session_clock,
 )
 from pulse_frame.store.sessions import LIST_COMMAND
 from tests import database
@@ -33,6 +34,9 @@ UNDEFINED_TABLE = "42P01"
 BATCH_SIZE = 1_000
 DUPLICATE_T_MS = START_MS + 987_654
 MISSING_OFFSET = 1_000
+NS_PER_MS = 1_000_000
+WARM_UP_NS = 120_000_000_000
+COUNTED_NS = MONOTONIC_NS + WARM_UP_NS
 DROPPED_WRITERS = ["add_beats", "add_intervals", "add_hrv_readings"]
 EMPTY = {"frame_samples": 0, "beats": 0, "intervals": 0, "hrv_readings": 0}
 
@@ -95,7 +99,7 @@ def hrv_row(item: HrvRow) -> tuple[object, ...]:
 
 def new_session() -> int:
     with open_writer() as writer:
-        return writer.create_session(WALL_NS, MONOTONIC_NS)
+        return writer.create_session(WALL_NS, MONOTONIC_NS, MONOTONIC_NS)
 
 
 def write_samples(session_id: int, items: list[FrameSample]) -> None:
@@ -111,10 +115,11 @@ def assert_coded_without_psycopg_text(error: StoreError) -> None:
     assert "Key (" not in text
 
 
-def test_create_session_stores_the_wall_and_monotonic_pair_and_returns_its_id(
+def test_create_session_stores_the_anchor_pair_and_the_counted_start_and_returns_its_id(
     store_url: str,
 ) -> None:
-    session_id = new_session()
+    with open_writer() as writer:
+        session_id = writer.create_session(WALL_NS, MONOTONIC_NS, COUNTED_NS)
 
     assert isinstance(session_id, int)
     assert stored_session_ids(store_url) == [session_id]
@@ -122,14 +127,59 @@ def test_create_session_stores_the_wall_and_monotonic_pair_and_returns_its_id(
         store_url,
         "sessions",
         session_id,
-        ["started_wall_ns", "started_monotonic_ns"],
-    ) == [(WALL_NS, MONOTONIC_NS)]
+        ["started_wall_ns", "started_monotonic_ns", "counted_monotonic_ns"],
+    ) == [(WALL_NS, MONOTONIC_NS, COUNTED_NS)]
+
+
+def test_session_clock_reads_back_the_anchor_and_the_counted_start_of_a_warm_up(
+    store_url: str,
+) -> None:
+    with open_writer() as writer:
+        session_id = writer.create_session(WALL_NS, MONOTONIC_NS, COUNTED_NS)
+
+    clock = session_clock(session_id)
+
+    assert clock.anchor_ns == MONOTONIC_NS
+    assert clock.counted_ms == COUNTED_NS // NS_PER_MS
+    assert clock.warmed_up is True
+
+
+@pytest.mark.parametrize(
+    ("counted_ns", "counted_ms"),
+    [(None, 0), (MONOTONIC_NS, MONOTONIC_NS // NS_PER_MS)],
+    ids=["column_default", "at_the_anchor"],
+)
+def test_session_clock_of_a_session_without_a_warm_up_is_not_warmed_up(
+    store_url: str, counted_ns: int | None, counted_ms: int
+) -> None:
+    session_id = database.insert_recording(
+        store_url, WALL_NS, MONOTONIC_NS, [], counted_ns
+    )
+
+    clock = session_clock(session_id)
+
+    assert clock.anchor_ns == MONOTONIC_NS
+    assert clock.counted_ms == counted_ms
+    assert clock.warmed_up is False
+
+
+def test_session_clock_of_a_missing_session_raises_session_not_found(
+    store_url: str,
+) -> None:
+    kept = seed_session(store_url)
+
+    with pytest.raises(StoreError) as raised:
+        session_clock(kept + MISSING_OFFSET)
+
+    assert raised.value.code == "SESSION_NOT_FOUND"
+    assert LIST_COMMAND in raised.value.action
+    assert_coded_without_psycopg_text(raised.value)
 
 
 def test_each_new_session_gets_its_own_id(store_url: str) -> None:
     with open_writer() as writer:
-        first = writer.create_session(WALL_NS, MONOTONIC_NS)
-        second = writer.create_session(WALL_NS + 5, MONOTONIC_NS + 5)
+        first = writer.create_session(WALL_NS, MONOTONIC_NS, MONOTONIC_NS)
+        second = writer.create_session(WALL_NS + 5, MONOTONIC_NS + 5, MONOTONIC_NS + 5)
 
     assert first != second
     assert stored_session_ids(store_url) == sorted([first, second])
@@ -149,7 +199,7 @@ def test_one_writer_holds_one_connection_for_the_session_and_every_batch(
     batches = [samples(BATCH_SIZE), samples(BATCH_SIZE, first=BATCH_SIZE)]
 
     with open_writer() as writer:
-        session_id = writer.create_session(WALL_NS, MONOTONIC_NS)
+        session_id = writer.create_session(WALL_NS, MONOTONIC_NS, MONOTONIC_NS)
         for batch in batches:
             writer.add_frame_samples(session_id, batch)
 
@@ -162,7 +212,7 @@ def test_each_batch_is_committed_before_the_writer_closes(store_url: str) -> Non
     batch = samples(20)
 
     with open_writer() as writer:
-        session_id = writer.create_session(WALL_NS, MONOTONIC_NS)
+        session_id = writer.create_session(WALL_NS, MONOTONIC_NS, MONOTONIC_NS)
         writer.add_frame_samples(session_id, batch)
         seen_while_open = stored_rows(
             store_url, "frame_samples", session_id, SAMPLE_COLUMNS

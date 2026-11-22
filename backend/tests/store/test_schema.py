@@ -1,5 +1,6 @@
 import re
 from collections.abc import Generator
+from pathlib import Path
 
 import psycopg
 import pytest
@@ -20,7 +21,12 @@ from tests.database import (
 )
 
 LISTED_COLUMNS = {
-    "sessions": {"id", "started_wall_ns", "started_monotonic_ns"},
+    "sessions": {
+        "id",
+        "started_wall_ns",
+        "started_monotonic_ns",
+        "counted_monotonic_ns",
+    },
     "frame_samples": {
         "session_id",
         "t_ms",
@@ -49,6 +55,7 @@ LISTED_COLUMNS = {
 CLOCK_COLUMNS = {
     ("sessions", "started_wall_ns"),
     ("sessions", "started_monotonic_ns"),
+    ("sessions", "counted_monotonic_ns"),
     ("frame_samples", "t_ms"),
     ("beats", "t_ms"),
     ("intervals", "t_ms"),
@@ -132,6 +139,40 @@ WHERE space.nspname = %s AND privilege.grantee <> space.nspowner
 """
 CASCADE = "c"
 PLANTED_OBJECT_TYPES = {"r", "S", "n"}
+COUNTED_COLUMN = "counted_monotonic_ns"
+LAST_MIGRATION_WITHOUT_THE_COUNTED_START = "20261117150000_capture_and_replay.sql"
+COUNTED_DEFAULT = """
+SELECT column_default FROM information_schema.columns
+WHERE table_schema = %s
+  AND table_name = 'sessions'
+  AND column_name = 'counted_monotonic_ns'
+"""
+
+
+@pytest.fixture
+def store_without_the_counted_start(store_database: str) -> Generator[str]:
+    server = database.server_url()
+    url = database.recreate_database(server, database.TEST_DATABASE)
+    database.apply_migration_files(url, migrations_up_to_the_counted_start())
+    yield url
+    database.recreate_database(server, database.TEST_DATABASE)
+    database.apply_migrations(store_database)
+
+
+def migrations_up_to_the_counted_start() -> list[Path]:
+    return [
+        path
+        for path in database.migration_files()
+        if path.name <= LAST_MIGRATION_WITHOUT_THE_COUNTED_START
+    ]
+
+
+def migrations_from_the_counted_start() -> list[Path]:
+    return [
+        path
+        for path in database.migration_files()
+        if path.name > LAST_MIGRATION_WITHOUT_THE_COUNTED_START
+    ]
 
 
 @pytest.fixture
@@ -386,3 +427,35 @@ def test_every_child_table_belongs_to_its_session_and_goes_with_it(
         if column.table == table and column.name == SESSION_KEY
     )
     assert not session_key.nullable, f"`{table}.{SESSION_KEY}` may be NULL"
+
+
+def test_the_counted_start_defaults_to_zero_so_a_session_without_one_counts_it_all(
+    store_url: str,
+) -> None:
+    session_id = database.insert_recording(
+        store_url, database.WALL_NS, database.MONOTONIC_NS, []
+    )
+
+    defaults = query(store_url, COUNTED_DEFAULT)
+
+    assert defaults == [("0",)], f"the counted start defaults to {defaults}"
+    assert database.stored_rows(
+        store_url, SESSION_TABLE, session_id, [COUNTED_COLUMN]
+    ) == [(0,)]
+
+
+def test_sessions_stored_before_the_counted_start_migration_read_zero_after_it(
+    store_without_the_counted_start: str,
+) -> None:
+    url = store_without_the_counted_start
+    later = migrations_from_the_counted_start()
+    assert later, "no migration after the capture and replay one adds the counted start"
+    session_id = database.insert_recording(
+        url, database.WALL_NS, database.MONOTONIC_NS, []
+    )
+
+    database.apply_migration_files(url, later)
+
+    assert database.stored_rows(
+        url, SESSION_TABLE, session_id, ["started_monotonic_ns", COUNTED_COLUMN]
+    ) == [(database.MONOTONIC_NS, 0)]
