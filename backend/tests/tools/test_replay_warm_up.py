@@ -44,13 +44,21 @@ WARM_UP_MOTION_TO_S = 30.0
 LABEL_WARM_UP_S = 60.0
 LABEL_COUNTED = [(180.0, "3", "minutes"), (120.0, "2", "minutes")]
 THREE_MINUTES = 3
+DEFAULT_COUNTED_S = 90.0
 LABEL_LEAD_S = 10.0
 LABEL_SPANS = [
+    pytest.param(400, "0", "seconds", id="under_half_a_second_reads_zero_seconds"),
     pytest.param(45_400, "45", "seconds", id="under_a_minute_in_seconds"),
     pytest.param(44_500, "45", "seconds", id="seconds_round_half_up"),
+    pytest.param(59_600, "1", "minute", id="whole_seconds_reach_a_minute"),
     pytest.param(60_000, "1", "minute", id="one_minute_singular"),
-    pytest.param(149_999, "2", "minutes", id="just_under_two_and_a_half"),
-    pytest.param(150_000, "3", "minutes", id="minutes_round_half_up"),
+    pytest.param(60_500, "61", "seconds", id="past_a_whole_minute_in_seconds"),
+    pytest.param(89_400, "89", "seconds", id="just_under_ninety_rounds_down"),
+    pytest.param(89_970, "90", "seconds", id="a_frame_short_of_ninety_seconds"),
+    pytest.param(90_000, "90", "seconds", id="the_default_counted_part"),
+    pytest.param(120_000, "2", "minutes", id="two_whole_minutes"),
+    pytest.param(149_999, "150", "seconds", id="two_and_a_half_minutes_in_seconds"),
+    pytest.param(179_500, "3", "minutes", id="whole_seconds_reach_three_minutes"),
     pytest.param(330_000, "5", "minutes", id="over_the_hrv_window"),
 ]
 SHORT_WARM_UP_S = 60.0
@@ -81,7 +89,18 @@ NO_COUNTED_CAUSES = (
     "The capture stopped before the warm-up ended, or saw no usable face after it."
 )
 NO_COUNTED_ACTION_WORDS = "keep your face in view"
-COUNTED_FIELDS = ("bpm", "count", "amount", "unit", "rmssd", "sdnn", "accepted")
+COUNTED_FIELDS = (
+    "bpm",
+    "count",
+    "newest_sdnn",
+    "amount",
+    "unit",
+    "rmssd",
+    "counted_sdnn",
+    "sdnn_minutes",
+    "unset_sdnn",
+    "accepted",
+)
 TODAYS_FIELDS = ("bpm", "count", "rmssd", "sdnn", "accepted")
 
 
@@ -146,7 +165,7 @@ def replay_output(
 def summary_fields(line: str, pattern: str, fields: tuple[str, ...]) -> dict[str, str]:
     found = re.fullmatch(pattern, line)
     assert found is not None, "the summary line does not have the expected wording"
-    return {name: found[name] for name in fields}
+    return {name: found[name] or "" for name in fields}
 
 
 def printed(
@@ -165,6 +184,10 @@ def counted_summary(
     session_id: int, capsys: pytest.CaptureFixture[str]
 ) -> dict[str, str]:
     return printed(session_id, capsys, COUNTED_SUMMARY_LINE, COUNTED_FIELDS)
+
+
+def printed_sdnn(fields: dict[str, str]) -> str:
+    return fields["newest_sdnn"] or fields["counted_sdnn"] or fields["unset_sdnn"]
 
 
 def todays_summary(
@@ -332,7 +355,7 @@ def test_a_weak_warm_up_never_holds_the_counted_part_under_the_reading_floor(
     counted = counted_summary(counted_id, capsys)
 
     assert counted["rmssd"] != "-"
-    assert counted["sdnn"] != "-"
+    assert printed_sdnn(counted) != "-"
     assert float(counted["rmssd"]) == pytest.approx(
         weak_warm_up.counted_truth_rmssd(), abs=HRV_TOLERANCE_MS
     )
@@ -468,6 +491,7 @@ def test_the_weak_signal_notice_counts_only_the_windows_of_a_short_counted_part(
         "seconds",
     )
     assert fields["count"] == "0"
+    assert fields["unset_sdnn"] == "-"
     notices = err.splitlines()
     assert len(notices) == 1
     assert notices[0].startswith(f"{WEAK_CODE}: ")
@@ -545,7 +569,7 @@ def test_ctrl_c_during_the_warm_up_then_replay_gives_the_no_counted_samples_noti
     LABEL_COUNTED,
     ids=["three_minutes", "two_minutes"],
 )
-def test_a_warm_up_session_summary_names_the_counted_part_in_whole_minutes(
+def test_a_whole_minute_counted_part_names_its_minutes_and_its_sdnn_minute_count(
     store_url: str,
     capsys: pytest.CaptureFixture[str],
     counted_s: float,
@@ -560,7 +584,9 @@ def test_a_warm_up_session_summary_names_the_counted_part_in_whole_minutes(
     assert (fields["amount"], fields["unit"]) == (amount, unit)
     assert fields["bpm"] != "-"
     assert fields["rmssd"] != "-"
-    assert fields["sdnn"] != "-"
+    assert fields["newest_sdnn"] == ""
+    assert fields["counted_sdnn"] != ""
+    assert fields["sdnn_minutes"] == amount
     assert float(fields["accepted"]) == pytest.approx(
         share_without_edges(interval_rows(store_url, session_id)),
         abs=SHARE_TOLERANCE_PERCENT,
@@ -580,12 +606,37 @@ def test_the_three_minute_counted_sdnn_is_the_mean_over_all_three_minutes(
         interval_rows(store_url, session_id), newest_ms
     )
     assert minutes == THREE_MINUTES, f"only {minutes} minutes hold enough beats"
-    assert fields["sdnn"] != "-"
-    assert float(fields["sdnn"]) == pytest.approx(expected, abs=PRINTED_MS)
+    assert (fields["amount"], fields["unit"]) == ("3", "minutes")
+    assert fields["newest_sdnn"] == ""
+    assert fields["sdnn_minutes"] == str(THREE_MINUTES)
+    assert float(fields["counted_sdnn"]) == pytest.approx(expected, abs=PRINTED_MS)
+
+
+def test_a_ninety_second_counted_part_prints_its_one_minute_sdnn_in_the_newest_minute(
+    store_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = WarmUpSession(
+        WEAK_WARM_UP_SD, LABEL_WARM_UP_S, DEFAULT_COUNTED_S, motion=False
+    )
+    session_id = session.store(store_url)
+    newest_ms = float(round(float(session.recording.timestamps_ms[-1])))
+
+    fields = counted_summary(session_id, capsys)
+
+    expected, minutes = mean_minute_sdnn(
+        interval_rows(store_url, session_id), newest_ms
+    )
+    assert minutes == 1, f"{minutes} minutes hold enough beats, not only the newest"
+    assert (fields["amount"], fields["unit"]) == ("90", "seconds")
+    assert fields["bpm"] != "-"
+    assert fields["rmssd"] != "-"
+    assert (fields["counted_sdnn"], fields["sdnn_minutes"]) == ("", "")
+    assert fields["unset_sdnn"] == ""
+    assert float(fields["newest_sdnn"]) == pytest.approx(expected, abs=PRINTED_MS)
 
 
 @pytest.mark.parametrize(("span_ms", "amount", "unit"), LABEL_SPANS)
-def test_the_counted_label_rounds_half_up_caps_at_the_window_and_uses_seconds(
+def test_the_counted_label_is_whole_seconds_unless_whole_minutes_capped_at_the_window(
     store_url: str,
     capsys: pytest.CaptureFixture[str],
     span_ms: int,

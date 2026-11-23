@@ -61,6 +61,8 @@ FLAG_CODES: dict[IntervalFlag, int] = {
 SAMPLE_HOLE_MS = 100.0
 SUMMARY_SPAN_MS = 60_000.0
 MS_PER_S = 1_000.0
+SECONDS_PER_MINUTE = 60
+NEWEST_MINUTE = 0
 SUMMARY_MIN_ACCEPTED_MS = 45_000.0
 MIN_MINUTE_INTERVALS = 2
 HRV_WINDOW_LABEL = f"last {round(WINDOW_MS / 60_000.0)} minutes"
@@ -96,6 +98,7 @@ class Summary:
     sdnn_ms: float | None
     count: int
     accepted_percent: float | None
+    sdnn_minutes: tuple[int, ...] = ()
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -188,10 +191,14 @@ def counted_span_label(clock: SessionClock, result: ReplayResult) -> str | None:
     if not clock.warmed_up:
         return None
     span_ms = min(float(result.newest_ms - clock.counted_ms), WINDOW_MS)
-    if span_ms < SUMMARY_SPAN_MS:
-        return f"counted {half_up(span_ms / MS_PER_S)} seconds"
-    minutes = half_up(span_ms / SUMMARY_SPAN_MS)
-    return f"counted {minutes} minute{'' if minutes == 1 else 's'}"
+    seconds = half_up(span_ms / MS_PER_S)
+    if seconds == 0 or seconds % SECONDS_PER_MINUTE:
+        return f"counted {seconds} seconds"
+    return f"counted {minute_count(seconds // SECONDS_PER_MINUTE)}"
+
+
+def minute_count(minutes: int) -> str:
+    return f"{minutes} minute{'' if minutes == 1 else 's'}"
 
 
 def half_up(value: float) -> int:
@@ -358,29 +365,36 @@ def summarise(result: ReplayResult) -> Summary:
             accepted_percent=accepted_percent(result.intervals),
         )
     reading = hrv_reading(result.intervals, result.newest_ms, result.window_checks)
+    sdnns = (
+        {}
+        if reading.sdnn_ms is None
+        else minute_sdnns(result.intervals, result.newest_ms)
+    )
     return Summary(
         bpm=float(60_000.0 / accepted.mean()),
         rmssd_ms=reading.rmssd_ms,
-        sdnn_ms=None
-        if reading.sdnn_ms is None
-        else mean_minute_sdnn(result.intervals, result.newest_ms),
+        sdnn_ms=mean_sdnn(sdnns),
         count=int(accepted.size),
         accepted_percent=accepted_percent(result.intervals),
+        sdnn_minutes=tuple(sorted(sdnns)),
     )
 
 
-def mean_minute_sdnn(intervals: Sequence[Interval], newest_ms: int) -> float | None:
+def mean_sdnn(sdnns: dict[int, float]) -> float | None:
+    return float(np.mean(list(sdnns.values()))) if sdnns else None
+
+
+def minute_sdnns(intervals: Sequence[Interval], newest_ms: int) -> dict[int, float]:
     minutes: defaultdict[int, list[float]] = defaultdict(list)
     for interval in newest_window(intervals, newest_ms):
         if interval.accepted:
             minute = int((newest_ms - interval.end_ms) // SUMMARY_SPAN_MS)
             minutes[minute].append(interval.ibi_ms)
-    sdnns = [
-        float(np.std(ibis, ddof=1))
-        for ibis in minutes.values()
+    return {
+        minute: float(np.std(ibis, ddof=1))
+        for minute, ibis in minutes.items()
         if len(ibis) >= MIN_MINUTE_INTERVALS and sum(ibis) >= SUMMARY_MIN_ACCEPTED_MS
-    ]
-    return float(np.mean(sdnns)) if sdnns else None
+    }
 
 
 def passes_gates(span: Sequence[Interval], accepted_count: int, newest_ms: int) -> bool:
@@ -405,20 +419,39 @@ def shown(value: float | None, unit: str = "") -> str:
 def summary_line(
     session_id: int, summary: Summary, counted_label: str | None = None
 ) -> str:
-    hrv_label, share_label = (
-        (HRV_WINDOW_LABEL, WHOLE_SESSION_LABEL)
-        if counted_label is None
-        else (counted_label, COUNTED_PART_LABEL)
-    )
+    if counted_label is None:
+        newest_sdnn = ""
+        hrv_label, hrv_sdnn, share_label = (
+            HRV_WINDOW_LABEL,
+            sdnn_part(summary),
+            WHOLE_SESSION_LABEL,
+        )
+    else:
+        newest_only = summary.sdnn_minutes == (NEWEST_MINUTE,)
+        newest_sdnn = sdnn_part(summary) if newest_only else ""
+        hrv_label, hrv_sdnn, share_label = (
+            counted_label,
+            "" if newest_only else counted_sdnn_part(summary),
+            COUNTED_PART_LABEL,
+        )
     return (
         f"Session {session_id} replayed, newest minute:"
         f" bpm={shown(summary.bpm)}"
-        f" count={summary.count};"
+        f" count={summary.count}{newest_sdnn};"
         f" {hrv_label}:"
-        f" rmssd={shown(summary.rmssd_ms, ' ms')}"
-        f" sdnn={shown(summary.sdnn_ms, ' ms')};"
+        f" rmssd={shown(summary.rmssd_ms, ' ms')}{hrv_sdnn};"
         f" {share_label}: accepted={shown(summary.accepted_percent, '%')}"
     )
+
+
+def sdnn_part(summary: Summary) -> str:
+    return f" sdnn={shown(summary.sdnn_ms, ' ms')}"
+
+
+def counted_sdnn_part(summary: Summary) -> str:
+    if summary.sdnn_ms is None:
+        return sdnn_part(summary)
+    return f"{sdnn_part(summary)} over {minute_count(len(summary.sdnn_minutes))}"
 
 
 if __name__ == "__main__":

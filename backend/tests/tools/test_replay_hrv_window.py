@@ -258,7 +258,7 @@ def sparse_flags(count: int) -> list[IntervalFlag]:
     [(sparse_flags(DRIFT_COUNT), False), (["ok"] * DRIFT_COUNT, True)],
     ids=["no_full_minute", "full_minutes"],
 )
-def test_the_mean_minute_sdnn_is_none_without_a_minute_of_forty_five_s_accepted(
+def test_the_mean_of_minute_sdnns_is_none_without_a_minute_of_forty_five_s_accepted(
     flags: list[IntervalFlag], has_sdnn: bool
 ) -> None:
     intervals = chain(drifting_ibis(DRIFT_COUNT), flags=flags)
@@ -272,10 +272,10 @@ def test_the_mean_minute_sdnn_is_none_without_a_minute_of_forty_five_s_accepted(
         else None
     )
 
-    mean_sdnn = replay.mean_minute_sdnn(intervals, newest_ms)
+    sdnn = replay.mean_sdnn(replay.minute_sdnns(intervals, newest_ms))
 
-    assert (mean_sdnn is not None) is has_sdnn
-    assert mean_sdnn == expected
+    assert (sdnn is not None) is has_sdnn
+    assert sdnn == expected
 
 
 def older_alternation() -> replay.ReplayResult:
