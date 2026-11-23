@@ -1,13 +1,17 @@
 127.0.0.1
 clerk.com
+code.claude.com
 docs.astral.sh
 files.pythonhosted.org
 github.com
 oxc.rs
+platform.claude.com
 pypi.org
 raw.githubusercontent.com
 react.dev
 storage.googleapis.com
 supabase.com
+support.claude.com
 swc.rs
 ui.shadcn.com
+www.anthropic.com
