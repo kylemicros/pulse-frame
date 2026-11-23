@@ -15,6 +15,7 @@ from pulse_frame.signal.hrv import (
 from pulse_frame.tools import replay
 from tests.frames import TRUE_BPM
 from tests.signal.beat_synthetic import chain, period_ms, respiring_ibis, rmssd, sdnn
+from tests.tools.replay_support import median_snr_db
 
 FORMULA_TOLERANCE_MS = 0.1
 APART_MS = 3.0
@@ -324,10 +325,6 @@ def clean_session() -> replay.ReplayResult:
     )
 
 
-def median_db(checks: list[WindowCheck]) -> float:
-    return float(np.median([c.snr_db for c in checks]))
-
-
 def window_checks(result: replay.ReplayResult) -> list[WindowCheck]:
     window = in_hrv_window(result.intervals, result.newest_ms)
     return [
@@ -341,7 +338,7 @@ def assert_minute_passes(result: replay.ReplayResult) -> None:
     span = minute(result.intervals, result.newest_ms)
     assert all(i.accepted for i in span)
     assert not alternates(span)
-    assert median_db(replay.newest_checks(result)) >= READING_FLOOR_DB
+    assert median_snr_db(replay.newest_checks(result)) >= READING_FLOOR_DB
 
 
 def window_fails_a_gate(result: replay.ReplayResult) -> bool:
@@ -351,7 +348,7 @@ def window_fails_a_gate(result: replay.ReplayResult) -> bool:
     return (
         alternates(window)
         or rejected > MAX_REJECTED_SHARE
-        or median_db(window_checks(result)) < READING_FLOOR_DB
+        or median_snr_db(window_checks(result)) < READING_FLOOR_DB
     )
 
 
@@ -384,8 +381,8 @@ def test_a_failing_hrv_window_drops_rmssd_and_sdnn_but_keeps_the_minutes_bpm(
 def test_a_weak_newest_minute_in_a_passing_window_prints_bpm_rmssd_and_sdnn() -> None:
     result = newest_checks_under_the_floor()
     newest_minute = minute_ibis(result.intervals, result.newest_ms)
-    assert median_db(replay.newest_checks(result)) < READING_FLOOR_DB
-    assert median_db(window_checks(result)) >= READING_FLOOR_DB
+    assert median_snr_db(replay.newest_checks(result)) < READING_FLOOR_DB
+    assert median_snr_db(window_checks(result)) >= READING_FLOOR_DB
 
     summary = replay.summarise(result)
 

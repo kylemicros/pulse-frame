@@ -67,8 +67,14 @@ from tests.tools.replay_support import (
     ANCHOR_LEAD_MS,
     FLAG_CODES,
     HRV_COLUMNS,
+    NS_PER_MS,
+    SAMPLE_HOLE_MS,
     SUMMARY_LINE,
+    assert_face_loss_line,
+    face_left_view,
+    face_lost_recording,
     interval_rows,
+    no_reading_lines,
     sample_rows,
 )
 
@@ -76,7 +82,6 @@ DURATION_S = 90.0
 SHORT_S = 30.0
 LONG_S = 330.0
 PROBE_S = 5.0
-NS_PER_MS = 1_000_000
 SUMMARY_SPAN_MS = 60_000.0
 EDGE_MS = 3_000.0
 HRV_TOLERANCE_MS = 3.0
@@ -99,7 +104,6 @@ FAST_BPM = 150.0
 FAST_FROM_S = 62.0
 FAST_TO_S = 64.0
 FAR_OFF_SHARE = 0.5
-SAMPLE_HOLE_MS = 100.0
 SUMMARY_MIN_ACCEPTED_MS = 45_000.0
 SWEEP_TOLERANCE_MS = {50.0: 5.0, 72.0: 3.0, 110.0: 3.0}
 WAVE_S = 120.0
@@ -134,10 +138,8 @@ MOST_UNMEASURED = 40
 MEASURED_UNDER = 6
 SOME_UNMEASURED = 4
 UNMEASURED_WORDING = "not measured"
-FACE_LOSS_BPM = 60.0
 FACE_LOSS_SESSION_S = 120.0
 FACE_LOSS_EVERY_S = 14.0
-FACE_LOSS_S = 1.5
 WEAK_ACTION_WORDS = ("light", "still", "exposure")
 AGGREGATE_LIMIT = 1_000.0
 NUMBER = r"-?\d+(?:\.\d+)?"
@@ -1304,21 +1306,21 @@ def test_the_notice_names_unmeasured_windows_apart_from_those_under_the_floor() 
     assert UNMEASURED_WORDING in notice
 
 
-def face_loss_recording() -> Recording:
-    recording, _ = beat_recording(FACE_LOSS_BPM, SEED, FACE_LOSS_SESSION_S)
-    seconds = seconds_of(recording)
-    lost = np.mod(seconds, FACE_LOSS_EVERY_S) >= FACE_LOSS_EVERY_S - FACE_LOSS_S
-    return Recording(recording.timestamps_ms[~lost], recording.regions[~lost])
-
-
-def test_a_clean_face_lost_every_fourteen_seconds_prints_no_weak_signal_notice(
+def test_a_clean_face_lost_every_fourteen_seconds_gives_the_face_loss_line_not_weak(
     store_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    session_id = stored_recording(store_url, face_loss_recording())
+    recording = face_lost_recording(FACE_LOSS_SESSION_S, FACE_LOSS_EVERY_S)
+    session_id = stored_recording(store_url, recording)
+    checks = replay.replay_samples(frame_samples(session_id)).window_checks
+    assert face_left_view(checks), "the face did not leave the view often enough"
 
     lines = replay_lines(session_id, capsys)
 
-    assert lines == [expected_summary_line(session_id)]
+    assert weak_notices("\n".join(lines)) == []
+    assert len(lines) == 2, f"replay printed {len(lines)} lines"
+    assert lines[0] == expected_summary_line(session_id)
+    assert no_reading_lines(lines[1:]) == lines[1:]
+    assert_face_loss_line(lines[1])
 
 
 def test_newest_checks_keep_exactly_the_newest_minute_ends_included() -> None:
