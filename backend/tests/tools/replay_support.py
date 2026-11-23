@@ -24,12 +24,15 @@ SUMMARY_LINE = (
     rf" sdnn=(?P<sdnn>{PRINTED_VALUE})(?: ms)?;"
     rf" whole session: accepted=(?P<accepted>{PRINTED_VALUE})%?$"
 )
+SDNN_VALUE = r"\d+\.\d"
 COUNTED_SUMMARY_LINE = (
     rf"Session (?P<session>\d+) replayed,"
-    rf" newest minute: bpm=(?P<bpm>{PRINTED_VALUE}) count=(?P<count>\d+);"
+    rf" newest minute: bpm=(?P<bpm>{PRINTED_VALUE}) count=(?P<count>\d+)"
+    rf"(?: sdnn=(?P<newest_sdnn>{SDNN_VALUE}) ms)?;"
     rf" counted (?P<amount>\d+) (?P<unit>minutes|minute|seconds):"
     rf" rmssd=(?P<rmssd>{PRINTED_VALUE})(?: ms)?"
-    rf" sdnn=(?P<sdnn>{PRINTED_VALUE})(?: ms)?;"
+    rf"(?(newest_sdnn)| sdnn=(?:(?P<counted_sdnn>{SDNN_VALUE}) ms"
+    rf" over (?P<sdnn_minutes>\d+) (?:minutes|minute)|(?P<unset_sdnn>-)));"
     rf" counted part: accepted=(?P<accepted>{PRINTED_VALUE})%?"
 )
 

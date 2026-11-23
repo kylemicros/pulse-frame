@@ -40,8 +40,10 @@ RUN_WITHOUT_WARM_UP = ["--warm-up", "0", "--seconds", RUN_SECONDS]
 WARM_UP_SECONDS = "1.5"
 COUNTED_SECONDS = "2"
 RUN_WITH_WARM_UP = ["--warm-up", WARM_UP_SECONDS, "--seconds", COUNTED_SECONDS]
-DEFAULT_WARM_UP_S = 120.0
-DEFAULT_COUNTED_S = 180.0
+DEFAULT_WARM_UP_S = 60.0
+DEFAULT_COUNTED_S = 90.0
+HELP_OPTION = re.compile(r"(?=\s--[a-z])")
+HELP_DEFAULT = re.compile(r"^--([a-z-]+) .*\(default ([^)]+)\)$")
 BEL = "\x07"
 PHASE_LINE = f"{BEL}Warm-up done, counting {COUNTED_SECONDS} s from now."
 GREY_FROM_READ = 61
@@ -545,11 +547,26 @@ def test_seconds_is_the_counted_length_after_a_stored_warm_up(
     assert end_ms - FRAME_REACH_MS <= times[-1] <= end_ms + FRAME_REACH_MS
 
 
-def test_the_warm_up_defaults_to_two_minutes_and_the_counted_part_to_three() -> None:
+def test_the_warm_up_defaults_to_sixty_seconds_and_the_counted_part_to_ninety() -> None:
     args = capture.parse_args([])
 
     assert args.seconds == DEFAULT_COUNTED_S
     assert args.warm_up == DEFAULT_WARM_UP_S
+
+
+def test_the_help_names_sixty_and_ninety_seconds_as_the_defaults(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exited:
+        capture.parse_args(["--help"])
+
+    assert exited.value.code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    options = text.split("options:", 1)[1]
+    found = [HELP_DEFAULT.match(part.strip()) for part in HELP_OPTION.split(options)]
+    defaults = {match[1]: match[2] for match in found if match}
+    assert defaults["warm-up"] == "60"
+    assert defaults["seconds"] == "90"
 
 
 def test_a_warm_up_of_zero_is_accepted_as_no_warm_up() -> None:

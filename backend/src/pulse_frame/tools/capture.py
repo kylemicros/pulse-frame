@@ -42,8 +42,8 @@ NO_SESSION_STARTED = "No session was started."
 SAMPLES_KEPT = "The samples read before it stopped are written to the session."
 STOPPED = "Stopped."
 BEL = "\a"
-DEFAULT_SECONDS = 180.0
-DEFAULT_WARM_UP = 120.0
+DEFAULT_SECONDS = 90.0
+DEFAULT_WARM_UP = 60.0
 MAX_SECONDS = 86_400.0
 NS_PER_S = 1e9
 
