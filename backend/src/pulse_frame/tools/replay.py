@@ -1,5 +1,6 @@
 import argparse
 import math
+import sys
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -17,12 +18,14 @@ from pulse_frame.signal.beats import (
 )
 from pulse_frame.signal.errors import SignalError
 from pulse_frame.signal.hrv import (
+    READING_FLOOR_DB,
     WINDOW_MS,
     HrvReading,
     HrvTracker,
     WindowCheck,
     alternates,
     checks_between,
+    clears_reading_floor,
     hrv_reading,
     is_stale,
     newest_window,
@@ -75,6 +78,14 @@ WEAK_SIGNAL_ACTION = (
     " keep still, and turn off the camera's auto exposure if it has that"
     f" setting, then record a new session with `{CAPTURE_COMMAND}`."
 )
+NO_READING_CODE = "READING_FLOOR_NOT_CLEARED"
+FAINT_PULSE_ACTION = (
+    "Give your face more even light, for example facing a window, and hold still,"
+)
+FACE_LOSS_REASON = (
+    "your face kept leaving the camera's view, so your pulse could not be read."
+)
+FACE_LOSS_ACTION = "Sit facing the camera and keep your face in view,"
 SANDBOX_FAILED_ACTION = (
     "Outbound network could not be limited to this machine, so the store was"
     " not opened and nothing was read or written. Check that this is macOS with"
@@ -168,10 +179,18 @@ def replay(session_id: int) -> int:
     )
     summary = summarise(result)
     write_out(summary_line(session_id, summary, counted_span_label(clock, result)))
-    notice = weak_notice(result, summary)
-    if notice is not None:
-        report("SIGNAL_TOO_WEAK", notice, WEAK_SIGNAL_ACTION)
+    report_notice(result, summary)
     return 0
+
+
+def report_notice(result: ReplayResult, summary: Summary) -> None:
+    weak = weak_notice(result, summary)
+    if weak is not None:
+        report("SIGNAL_TOO_WEAK", weak, WEAK_SIGNAL_ACTION)
+        return
+    no_reading = no_reading_notice(result, summary)
+    if no_reading is not None:
+        print(no_reading, file=sys.stderr)
 
 
 def report_no_counted_samples(session_id: int) -> None:
@@ -243,6 +262,50 @@ def weak_signal_message(checks: Sequence[WindowCheck]) -> str:
         f" windows were under the pulse quality floor of {SNR_FLOOR_DB:g} dB"
         f"{median}.{skipped} The pulse in the face colour did not repeat clearly"
         " enough across the face regions to time beats."
+    )
+
+
+def no_reading_notice(result: ReplayResult, summary: Summary) -> str | None:
+    checks = result.window_checks
+    if (
+        result.readings
+        or summary.rmssd_ms is not None
+        or not checks
+        or clears_reading_floor(checks)
+    ):
+        return None
+    if face_left_view(checks):
+        return no_reading_line(FACE_LOSS_REASON, FACE_LOSS_ACTION)
+    return no_reading_line(faint_pulse_reason(checks), FAINT_PULSE_ACTION)
+
+
+def is_unmeasured(check: WindowCheck) -> bool:
+    return math.isnan(check.snr_db) or check.snr_db == -math.inf
+
+
+def is_measured_under_reading_floor(check: WindowCheck) -> bool:
+    return check.measured and check.snr_db < READING_FLOOR_DB
+
+
+def face_left_view(checks: Sequence[WindowCheck]) -> bool:
+    unmeasured = sum(1 for check in checks if is_unmeasured(check))
+    under = sum(1 for check in checks if is_measured_under_reading_floor(check))
+    return unmeasured > under
+
+
+def faint_pulse_reason(checks: Sequence[WindowCheck]) -> str:
+    clear = sum(1 for check in checks if check.snr_db >= READING_FLOOR_DB)
+    if clear == 0:
+        return "your pulse never showed clearly during the run."
+    share = half_up(100.0 * clear / len(checks))
+    shown_share = "under 1%" if share == 0 else f"only {share}%"
+    return f"your pulse showed clearly in {shown_share} of the run."
+
+
+def no_reading_line(reason: str, action: str) -> str:
+    return (
+        f"No reading this time: {reason} {action} then record a new session with"
+        f" `{CAPTURE_COMMAND}`. Ref: {NO_READING_CODE}"
     )
 
 

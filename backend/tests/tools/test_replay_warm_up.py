@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 from pulse_frame.signal.beats import Interval
 from pulse_frame.signal.hrv import HrvTracker, WindowCheck
-from pulse_frame.signal.tracker import UPDATE_INTERVAL_MS, RegionColours
+from pulse_frame.signal.tracker import UPDATE_INTERVAL_MS
 from pulse_frame.store.recording import FrameSample, HrvRow, frame_samples
 from pulse_frame.tools import replay
 from pulse_frame.tools.sessions import SANDBOX_UNSUPPORTED_ACTION
@@ -24,17 +24,22 @@ from tests.signal.beat_synthetic import (
 from tests.signal.hrv_tracking import seconds_of
 from tests.signal.synthetic import Recording
 from tests.tools.replay_support import (
-    ANCHOR_LEAD_MS,
     COUNTED_SUMMARY_LINE,
     FLAG_CODES,
     HRV_COLUMNS,
+    NO_READING_CODE,
+    NS_PER_MS,
+    NS_PER_S,
     SUMMARY_LINE,
+    anchor_ns,
+    beside_holes,
     interval_rows,
+    notice_code,
+    region_colours,
     sample_rows,
+    still,
 )
 
-NS_PER_MS = 1_000_000
-NS_PER_S = 1_000_000_000
 WARM_UP_S = 100.0
 COUNTED_S = 80.0
 NOISY_WARM_UP_SD = 0.1
@@ -81,7 +86,6 @@ SHARE_TOLERANCE_PERCENT = 0.5
 MIN_SHARE_DROP_PERCENT = 5.0
 BOUNDARY_CLEARANCE_MS = 1.0
 WINDOW_SLACK_MS = 1.0
-SAMPLE_HOLE_MS = 100.0
 OK_CODE = 0
 EDGE_CODE = 4
 NO_COUNTED_CODE = "NO_COUNTED_SAMPLES"
@@ -143,15 +147,6 @@ class WarmUpSession:
         return rmssd(np.diff(inside))
 
 
-def anchor_ns(recording: Recording) -> int:
-    first_ms = round(float(recording.timestamps_ms[0]))
-    return (first_ms - ANCHOR_LEAD_MS) * NS_PER_MS
-
-
-def still(recording: Recording) -> NDArray[np.bool_]:
-    return np.zeros(recording.timestamps_ms.size, dtype=np.bool_)
-
-
 def replay_output(
     session_id: int, capsys: pytest.CaptureFixture[str]
 ) -> tuple[list[str], str]:
@@ -173,9 +168,10 @@ def printed(
     capsys: pytest.CaptureFixture[str],
     pattern: str,
     fields: tuple[str, ...],
+    notice_codes: tuple[str, ...] = (),
 ) -> dict[str, str]:
     lines, err = replay_output(session_id, capsys)
-    assert err == ""
+    assert [notice_code(line) for line in err.splitlines()] == list(notice_codes)
     assert len(lines) == 1, f"replay printed {len(lines)} lines"
     return summary_fields(lines[0], pattern, fields)
 
@@ -191,9 +187,11 @@ def printed_sdnn(fields: dict[str, str]) -> str:
 
 
 def todays_summary(
-    session_id: int, capsys: pytest.CaptureFixture[str]
+    session_id: int,
+    capsys: pytest.CaptureFixture[str],
+    notice_codes: tuple[str, ...] = (),
 ) -> dict[str, str]:
-    return printed(session_id, capsys, SUMMARY_LINE, TODAYS_FIELDS)
+    return printed(session_id, capsys, SUMMARY_LINE, TODAYS_FIELDS, notice_codes)
 
 
 def row_start_ms(row: tuple[object, ...]) -> float:
@@ -219,23 +217,6 @@ def mean_minute_sdnn(
         if len(ibis) >= MIN_MINUTE_INTERVALS and sum(ibis) >= SUMMARY_MIN_ACCEPTED_MS
     ]
     return float(np.mean(sdnns)), len(sdnns)
-
-
-def region_colours(sample: FrameSample) -> RegionColours:
-    return RegionColours(
-        forehead=sample.forehead,
-        left_cheek=sample.left_cheek,
-        right_cheek=sample.right_cheek,
-    )
-
-
-def beside_holes(samples: list[FrameSample]) -> NDArray[np.bool_]:
-    times = np.array([sample.t_ms for sample in samples], dtype=np.float64)
-    holes = np.diff(times) > SAMPLE_HOLE_MS
-    low = np.zeros(times.size, dtype=np.bool_)
-    low[:-1] |= holes
-    low[1:] |= holes
-    return low
 
 
 def todays_replay(samples: list[FrameSample]) -> replay.ReplayResult:
@@ -348,7 +329,7 @@ def test_a_weak_warm_up_never_holds_the_counted_part_under_the_reading_floor(
 ) -> None:
     whole_id = weak_warm_up.store(store_url, counted=False)
     counted_id = weak_warm_up.store(store_url)
-    whole = todays_summary(whole_id, capsys)
+    whole = todays_summary(whole_id, capsys, (NO_READING_CODE,))
     assert whole["rmssd"] == "-", "the weak warm-up does not reach the reading floor"
     assert rows_under(store_url, whole_id)["hrv_readings"] == 0
 
@@ -369,7 +350,7 @@ def test_the_accepted_share_covers_the_counted_part_only(
 ) -> None:
     whole_id = weak_warm_up.store(store_url, counted=False)
     counted_id = weak_warm_up.store(store_url)
-    whole = float(todays_summary(whole_id, capsys)["accepted"])
+    whole = float(todays_summary(whole_id, capsys, (NO_READING_CODE,))["accepted"])
     counted_only = [
         row
         for row in interval_rows(store_url, whole_id)
