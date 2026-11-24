@@ -308,6 +308,40 @@
     },
     {
       "files": [
+        "src/features/guided-capture/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/features/*/**",
+                  "!@/features/guided-capture/**"
+                ],
+                "message": "Reach another feature only through its index, e.g. @/features/monitor or @/features/capture."
+              },
+              {
+                "group": [
+                  "@/app",
+                  "@/app.*",
+                  "@/main",
+                  "@/main.*"
+                ],
+                "message": "The app and the entry are the top layer, so nothing below them imports @/app or @/main. Move the shared code into @/lib or @/components and import it from there."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
         "src/app.tsx"
       ],
       "rules": {

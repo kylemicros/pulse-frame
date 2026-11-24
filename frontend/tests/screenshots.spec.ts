@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { build, preview, type PreviewServer } from 'vite';
-import { MockBackend, STREAM_URL } from './support/mock-backend';
-import { longestPathCommands, monitorPage, refuseCamera, videoIsPlaying } from './support/monitor-page';
+import { advanceRun, advanceRunUntil, guidedPage, pushAndConfirm, RUN_STOPPED_TEXT } from './support/guided-page';
+import { faceScene, MockBackend, STREAM_URL } from './support/mock-backend';
+import { longestPathCommands, monitorPage, refuseCamera, setTabHidden, videoIsPlaying } from './support/monitor-page';
 
 const FRONTEND_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -78,6 +79,20 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
     animations: 'disabled',
     caret: 'hide',
   });
+}
+
+async function startGuidedRun(page: Page, session: Session): Promise<void> {
+  await guidedPage(page).start.click();
+  await expect.poll(() => session.backend.frames.length).toBeGreaterThan(1);
+}
+
+async function guidedLinkLost(page: Page, session: Session, close: { code: number; reason?: string }): Promise<void> {
+  await startGuidedRun(page, session);
+  await advanceRun(page, session.backend, 10000, 2500);
+  await pushAndConfirm(page, session.backend, OK_READING);
+  await expectOnlyMockedSockets(session);
+  session.backend.refuseEveryConnection(close);
+  session.backend.dropOpenConnections(close);
 }
 
 test.describe('monitor page screenshots', () => {
@@ -167,6 +182,183 @@ test.describe('monitor page screenshots', () => {
     await capture(page, testInfo, name);
   }
 
+  async function openBuiltGuidedRun(page: Page): Promise<Session> {
+    const session = await attachMockOnly(page);
+    await page.clock.install();
+    await openBuiltPage(page);
+    const guided = guidedPage(page);
+    await guided.guidedTab.click();
+    await expect(guided.panel).toBeVisible();
+    return session;
+  }
+
+  async function guidedIdle(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+
+    await expect(guided.start).toBeVisible();
+    await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
+    expect(session.backend.connections).toEqual([]);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedWarmUp(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+
+    await advanceRun(page, session.backend, 12000, 2500);
+
+    await expect(guided.warmUpTimer).toBeVisible();
+    await expect(guided.settleBar).toBeVisible();
+    await expect.poll(() => videoIsPlaying(guided.panel.getByLabel('Camera preview'))).toBe(true);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedCounting(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+    await advanceRunUntil(page, session.backend, guided.countedTimer);
+    await pushAndConfirm(page, session.backend, { bpm: 67.2, quality_db: 9.1, state: 'ok' });
+
+    session.backend.setScene(faceScene({ moving: true }));
+    await advanceRun(page, session.backend, 3000, 1000);
+
+    await expect(guided.panel.getByText("You're moving. Hold still.", { exact: true })).toBeVisible();
+    await expect(guided.liveReadings.getByText(/^67(\.2)?$/)).toBeVisible();
+    await expect.poll(() => longestPathCommands(guided.pulseTrace)).toBeGreaterThan(10);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedDone(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+    await pushAndConfirm(page, session.backend, { bpm: 68.2, quality_db: 9.4, state: 'ok' });
+    await advanceRun(page, session.backend, 100000);
+    await pushAndConfirm(page, session.backend, { bpm: 67.8, quality_db: 9.4, state: 'ok' });
+
+    await advanceRunUntil(page, session.backend, guided.startAgain);
+
+    await expect(guided.headline('Done. Nice sitting.')).toBeVisible();
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedNoReading(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+
+    await advanceRunUntil(page, session.backend, guided.startAgain);
+
+    await expect(guided.headline('Done, but no reading this time.')).toBeVisible();
+    await expect(guided.panel.getByText('Ref: NO_READING', { exact: true })).toBeVisible();
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedCameraDenied(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    await refuseCamera(page, 'NotAllowedError');
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+
+    await guided.start.click();
+
+    await expect(guided.alert).toContainText('Ref: CAMERA_DENIED');
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedLastGood(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+    await pushAndConfirm(page, session.backend, OK_READING);
+    await expect(guided.liveReadings.getByText(SHOWN_BPM)).toBeVisible();
+
+    await pushAndConfirm(page, session.backend, { bpm: null, quality_db: 1.2, state: 'low_quality' });
+    await advanceRun(page, session.backend, 2000, 500);
+
+    await expect(guided.liveReadings.getByText(SHOWN_BPM)).toBeVisible();
+    await expect(guided.liveReadings.getByText('Last good', { exact: true })).toBeVisible();
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedBusy(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+
+    await guidedLinkLost(page, session, { code: 1013, reason: 'ANOTHER_CONNECTION_OPEN' });
+
+    await expect(guided.panel.getByText('Ref: SOCKET_BUSY', { exact: true })).toBeVisible();
+    await expect(guided.startAgain).toBeVisible();
+    await expect.poll(() => session.backend.openConnections().length).toBe(0);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedUnreachable(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+
+    await guidedLinkLost(page, session, { code: 1006 });
+
+    await expect(guided.panel.getByText('Ref: SOCKET_UNAVAILABLE', { exact: true })).toBeVisible();
+    await expect(guided.startAgain).toBeVisible();
+    await expect.poll(() => session.backend.openConnections().length).toBe(0);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedHiddenTab(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+    await advanceRun(page, session.backend, 10000, 2500);
+    await expectOnlyMockedSockets(session);
+
+    await setTabHidden(page, true);
+    await expect.poll(() => session.backend.openConnections().length).toBe(0);
+    await setTabHidden(page, false);
+
+    await expect(guided.panel.getByText('Ref: PAGE_HIDDEN', { exact: true })).toBeVisible();
+    await expect(guided.startAgain).toBeVisible();
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedStopped(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+    await advanceRun(page, session.backend, 10000, 2500);
+    await expectOnlyMockedSockets(session);
+
+    await guided.stop.click();
+
+    await expect(guided.panel.getByText(RUN_STOPPED_TEXT, { exact: true })).toBeVisible();
+    await expect(guided.startAgain).toBeVisible();
+    await expect.poll(() => session.backend.openConnections().length).toBe(0);
+    await capture(page, testInfo, name);
+  }
+
+  const GUIDED_STATES = [
+    { state: 'idle', title: 'the guided run idle page', shoot: guidedIdle },
+    { state: 'warm-up', title: 'the guided run warm-up', shoot: guidedWarmUp },
+    { state: 'counting', title: 'the guided run counting with the hold still hint', shoot: guidedCounting },
+    { state: 'done', title: 'the guided run result', shoot: guidedDone },
+    { state: 'no-reading', title: 'the guided run with no reading', shoot: guidedNoReading },
+    { state: 'camera-denied', title: 'the guided run camera denied guidance', shoot: guidedCameraDenied },
+    { state: 'last-good', title: 'the guided run holding the last good heart rate', shoot: guidedLastGood },
+    { state: 'busy', title: 'the guided run stopped because the app is busy elsewhere', shoot: guidedBusy },
+    { state: 'unreachable', title: 'the guided run stopped because the pulse reader is unreachable', shoot: guidedUnreachable },
+    { state: 'hidden-tab', title: 'the guided run stopped because the tab was hidden', shoot: guidedHiddenTab },
+    { state: 'run-stopped', title: 'the guided run stopped with Stop', shoot: guidedStopped },
+  ] as const;
+
   for (const viewport of VIEWPORTS) {
     test.describe(`${viewport.name} screenshots`, () => {
       test.use({ viewport: viewport.size });
@@ -202,6 +394,26 @@ test.describe('monitor page screenshots', () => {
       test(`screenshots the camera denied error in the dark theme at ${viewport.name} width`, async ({ page }, testInfo) => {
         await cameraDenied(page, testInfo, `${viewport.name}-dark-camera-denied`);
       });
+    });
+
+    test.describe(`${viewport.name} guided run screenshots`, () => {
+      test.use({ viewport: viewport.size });
+
+      for (const { state, title, shoot } of GUIDED_STATES) {
+        test(`screenshots ${title} at ${viewport.name} width`, async ({ page }, testInfo) => {
+          await shoot(page, testInfo, `${viewport.name}-guided-${state}`);
+        });
+      }
+    });
+
+    test.describe(`${viewport.name} guided run dark theme screenshots`, () => {
+      test.use({ viewport: viewport.size, colorScheme: 'dark' });
+
+      for (const { state, title, shoot } of GUIDED_STATES) {
+        test(`screenshots ${title} in the dark theme at ${viewport.name} width`, async ({ page }, testInfo) => {
+          await shoot(page, testInfo, `${viewport.name}-dark-guided-${state}`);
+        });
+      }
     });
   }
 });
