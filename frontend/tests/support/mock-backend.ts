@@ -143,6 +143,7 @@ export class MockBackend {
   private replyDelayMs = 0;
   private duplicate: DuplicateTiming | null = null;
   readonly sentDuplicates: SentDuplicate[] = [];
+  private readonly routes = new Map<number, WebSocketRoute>();
 
   static async attach(page: Page): Promise<MockBackend> {
     await recordSockets(page);
@@ -187,10 +188,23 @@ export class MockBackend {
     this.replyDelayMs = ms;
   }
 
+  holdReplies(): void {
+    this.held = true;
+  }
+
   releaseReplies(): void {
     this.held = false;
     for (const turn of this.heldTurns.splice(0)) {
       turn();
+    }
+  }
+
+  dropOpenConnections(close: ServerClose): void {
+    for (const connection of this.openConnections()) {
+      const ws = this.routes.get(connection.id);
+      if (ws !== undefined) {
+        this.closeFromServer(ws, connection, close);
+      }
     }
   }
 
@@ -228,6 +242,7 @@ export class MockBackend {
       return;
     }
     connection.accepted = true;
+    this.routes.set(connection.id, ws);
     const stream: Stream = { connection, awaitingReply: false, lastReadingT: null, staleReply: null };
     ws.onMessage((message) => {
       if (typeof message === 'string') {
