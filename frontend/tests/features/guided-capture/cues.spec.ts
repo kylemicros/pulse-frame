@@ -14,7 +14,7 @@ import {
   startRun,
 } from '../../support/guided-page';
 import { MockBackend } from '../../support/mock-backend';
-import { pageNow, refuseCamera, watchedText, watchText } from '../../support/monitor-page';
+import { pageNow, refuseCamera, watchedText, watchText } from '../../support/page-helpers';
 
 const MILESTONES = [
   /^Warm-up started\b/,
@@ -185,7 +185,7 @@ test.describe('guided run cues', () => {
     await expect(page).toHaveTitle(/^Done\b/);
     await expectCurrentStep(page, 'Result');
     await expect(guided.alert).toHaveCount(0);
-    await expect(guided.panel).not.toContainText(/Ref: (?!NO_READING)/);
+    await expect(guided.main).not.toContainText(/Ref: (?!NO_READING)/);
     const spoken = (await watchedText(page, 'milestones')).map((change) => change.text);
     expect(spoken).toContainEqual(expect.stringMatching(/^Counting started\b/));
     expect(spoken).toContainEqual(expect.stringMatching(/^Done\b/));

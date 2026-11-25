@@ -1,6 +1,7 @@
 import { RunBar } from "@/features/guided-capture/components/run-bar"
 import { LIVE_WINDOW_TEXT } from "@/features/guided-capture/lib/run-copy"
-import { ACQUIRE_MS, settlingSeconds, type MonitorState } from "@/features/monitor"
+import { ACQUIRE_MS, settlingSeconds } from "@/features/guided-capture/lib/reading-copy"
+import type { MonitorState } from "@/features/guided-capture/types"
 
 type LiveHeartRateProps = {
   monitor: MonitorState

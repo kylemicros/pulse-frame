@@ -4,6 +4,9 @@ import { RunCamera } from "@/features/guided-capture/components/run-camera"
 import { RunPanel } from "@/features/guided-capture/components/run-panel"
 import { RunSteps } from "@/features/guided-capture/components/run-steps"
 import { useGuidedRun } from "@/features/guided-capture/hooks/use-guided-run"
+import { useHeldValue } from "@/features/guided-capture/hooks/use-held-value"
+import { VIDEO_EMPTY } from "@/features/guided-capture/lib/empty-copy"
+import { sceneHint, VIDEO_HINT } from "@/features/guided-capture/lib/reading-copy"
 import {
   CAMERA_CUE,
   CAMERA_OFF_DONE,
@@ -14,17 +17,12 @@ import {
 } from "@/features/guided-capture/lib/run-copy"
 import { elapsedMs, milestoneText } from "@/features/guided-capture/lib/run-plan"
 import type { GuidedState, Stage } from "@/features/guided-capture/types"
-import { sceneHint, useHeldValue, VIDEO_EMPTY, VIDEO_HINT } from "@/features/monitor"
 
 const STRIP: Record<Stage, string> = {
   "get-comfy": "bg-(--ds-track)",
   "warm-up": "bg-[repeating-linear-gradient(135deg,var(--ds-warm)_0_10px,var(--ds-track)_10px_16px)]",
   counted: "bg-(--ds-count)",
   result: "bg-(--ds-done)",
-}
-
-type GuidedRunPageProps = {
-  active: boolean
 }
 
 function cameraOffText(state: GuidedState, stage: Stage): string | null {
@@ -51,12 +49,9 @@ function buttonLabel(state: GuidedState): "Start" | "Stop" | "Start again" {
   return state.status === "idle" ? "Start" : "Start again"
 }
 
-export function GuidedRunPage({ active }: GuidedRunPageProps) {
-  const { state, stage, videoRef, start, stop, chimeOn, toggleChime } = useGuidedRun(active)
+export function GuidedRunPage() {
+  const { state, stage, videoRef, start, stop, chimeOn, toggleChime } = useGuidedRun()
   const hint = VIDEO_HINT[useHeldValue(sceneHint(state.monitor.scene))]
-  if (!active) {
-    return null
-  }
   const label = buttonLabel(state)
   const refShown = stage === "get-comfy" && state.endError !== null
   const stoppedLine = state.status === "stopped" && state.endError === null
@@ -80,6 +75,7 @@ export function GuidedRunPage({ active }: GuidedRunPageProps) {
           <RunCamera
             videoRef={videoRef}
             live={state.monitor.phase === "running"}
+            scene={state.status === "running" ? state.monitor.scene : null}
             offText={cameraOffText(state, stage)}
             cue={refShown ? null : CAMERA_CUE[stage]}
           />

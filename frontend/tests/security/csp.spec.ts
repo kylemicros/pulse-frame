@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import { build, preview, type PreviewServer } from 'vite';
+import { guidedPage } from '../support/guided-page';
 import { MockBackend } from '../support/mock-backend';
-import { collectPageErrors, monitorPage, videoIsPlaying } from '../support/monitor-page';
+import { collectPageErrors, longestPathCommands, videoIsPlaying } from '../support/page-helpers';
 
 const FRONTEND_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -86,7 +87,7 @@ test.describe('content security policy', () => {
     expect(parsePolicy(policies[0])).toEqual(sortedPolicy(EXPECTED_POLICY));
   });
 
-  test('serves the built page with no content security policy violation while monitoring', async ({ page }) => {
+  test('serves the built page with no content security policy violation during a guided run with the skin outline', async ({ page }) => {
     const errors = collectPageErrors(page);
     await page.addInitScript(() => {
       const record: Violations = { violations: [] };
@@ -96,16 +97,18 @@ test.describe('content security policy', () => {
       });
     });
     const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
+    const guided = guidedPage(page);
     const url = server?.resolvedUrls?.local[0] ?? '';
     expect(url).not.toBe('');
 
     await page.goto(url);
-    await monitor.start.click();
+    await guided.start.click();
     await expect.poll(() => backend.frames.length).toBeGreaterThan(3);
-    await expect.poll(() => videoIsPlaying(monitor.video)).toBe(true);
+    await expect.poll(() => videoIsPlaying(guided.video)).toBe(true);
+    await expect(guided.outlines).toHaveCount(3);
     backend.pushReading({ bpm: 71.2, quality_db: 6.1, state: 'ok' });
-    await expect(monitor.bpmValue).toHaveText(/^(71\.2|71)$/);
+    await expect(guided.liveReadings.getByText(/^(71\.2|71)$/)).toBeVisible();
+    await expect.poll(() => longestPathCommands(guided.pulseTrace)).toBeGreaterThan(10);
 
     const violations = await page.evaluate(() => (globalThis as unknown as Window & { cspRecord: Violations }).cspRecord.violations);
     expect(violations).toEqual([]);

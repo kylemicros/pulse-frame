@@ -1,19 +1,17 @@
 import { expect, test } from '@playwright/test';
+import { expectQuietRef, guidedPage, startRun } from '../../support/guided-page';
 import { jpegSize } from '../../support/jpeg';
 import { MockBackend } from '../../support/mock-backend';
 import {
   cameraTrackStates,
   failFrameEncoding,
-  monitorPage,
-  ownTextLength,
   pageNow,
   recordUnhandledRejections,
   setTabHidden,
   spyOnCamera,
-  startMonitoring,
   unhandledRejections,
   waitForMoreFrames,
-} from '../../support/monitor-page';
+} from '../../support/page-helpers';
 
 const AWAY_MS = 30000;
 
@@ -21,7 +19,7 @@ test.describe('captured frames', () => {
   test('sends each frame as a rising little endian capture time followed by a 640 x 480 JPEG', async ({ page }) => {
     const backend = await MockBackend.attach(page);
 
-    await startMonitoring(page, backend);
+    await startRun(page, backend);
     await waitForMoreFrames(backend, 6);
     const nowInPage = await page.evaluate(() => performance.now());
 
@@ -41,16 +39,18 @@ test.describe('captured frames', () => {
     }
   });
 
-  test('keeps capture times rising with real clock readings after the tab was hidden', async ({ page }) => {
+  test('keeps capture times rising with real clock readings across a hidden tab and Start again', async ({ page }) => {
     await page.clock.install();
     const backend = await MockBackend.attach(page);
-    await startMonitoring(page, backend);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
     await waitForMoreFrames(backend, 3);
 
     await setTabHidden(page, true);
     const hiddenAt = await pageNow(page);
     await page.clock.fastForward(AWAY_MS);
     await setTabHidden(page, false);
+    await guided.startAgain.click();
     const shownAt = await pageNow(page);
     await expect.poll(() => backend.frames.filter((frame) => frame.captureMs >= shownAt).length).toBeGreaterThanOrEqual(5);
 
@@ -66,25 +66,21 @@ test.describe('captured frames', () => {
   });
 
   for (const failure of ['yields no image', 'throws'] as const) {
-    test(`shows FRAME_CAPTURE_FAILED, brings Start back and closes the socket when frame encoding ${failure}`, async ({
+    test(`shows FRAME_CAPTURE_FAILED, offers Start again and closes the socket when frame encoding ${failure}`, async ({
       page,
     }) => {
       await spyOnCamera(page);
       await recordUnhandledRejections(page);
       const backend = await MockBackend.attach(page);
-      const monitor = monitorPage(page);
-      await startMonitoring(page, backend);
+      const guided = guidedPage(page);
+      await startRun(page, backend);
       const [streaming] = backend.openConnections();
 
       await failFrameEncoding(page, failure);
 
-      const alert = monitor.alertWith('FRAME_CAPTURE_FAILED');
-      await expect(alert).toBeVisible();
-      await expect(alert).toContainText(/frame/i);
-      await expect(alert).toContainText(/\bStart\b/);
-      await expect(alert).toContainText(/reload/i);
-      expect(ownTextLength(await alert.innerText(), 'FRAME_CAPTURE_FAILED')).toBeGreaterThan(40);
-      await expect(monitor.start).toBeVisible();
+      await expectQuietRef(guided.main, "Reading the camera's video failed, so the run stopped.", 'FRAME_CAPTURE_FAILED');
+      await expect(guided.main.getByText('Press Start again. If it keeps happening, reload the page.')).toBeVisible();
+      await expect(guided.startAgain).toBeVisible();
       await expect.poll(() => streaming.closedBy).toBe('page');
       expect(backend.openConnections()).toHaveLength(0);
       await expect.poll(async () => (await cameraTrackStates(page)).every((state) => state === 'ended')).toBe(true);

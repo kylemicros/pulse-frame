@@ -64,10 +64,6 @@ export function socketRecords(page: Page): Promise<SocketRecord[]> {
   );
 }
 
-export function retryGaps(records: SocketRecord[]): number[] {
-  return records.slice(1).map((record, index) => record.createdAt - (records[index].closedAt ?? Number.NaN));
-}
-
 function parsed(text: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(text);

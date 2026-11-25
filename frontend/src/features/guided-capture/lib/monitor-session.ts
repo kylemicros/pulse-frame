@@ -9,7 +9,7 @@ import {
   START_FAILED,
   stopCamera,
 } from "@/features/capture"
-import type { SessionEvent } from "@/features/monitor/types"
+import type { SessionEvent } from "@/features/guided-capture/types"
 import type { AppError } from "@/lib/errors"
 import type { ServerMessage } from "@/lib/socket/messages"
 import { FRAME_SPACING_MS, STREAM_URL, StreamClient } from "@/lib/socket/stream-client"

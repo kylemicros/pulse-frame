@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 
-export const HOLD_MS = 400
+const HOLD_MS = 400
 
 export function useHeldValue<T extends string>(value: T, holdMs: number = HOLD_MS): T {
   const [shown, setShown] = useState(value)

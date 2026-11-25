@@ -1,4 +1,4 @@
-import { PULSE_WINDOW_MS, PulseChart } from "@/features/monitor"
+import { PULSE_WINDOW_MS, PulseChart } from "@/features/guided-capture/components/pulse-chart"
 import type { PulseSample } from "@/lib/socket/messages"
 
 const WINDOW_S = PULSE_WINDOW_MS / 1000

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { MockBackend, STREAM_URL } from '../support/mock-backend';
 import { advanceRun, advanceRunUntil, guidedPage, pushAndConfirm, startRun } from '../support/guided-page';
-import { monitorPage, startMonitoring, waitForMoreFrames } from '../support/monitor-page';
+import { waitForMoreFrames } from '../support/page-helpers';
 
 const PAGE_ORIGIN = 'http://127.0.0.1:5173';
 
@@ -20,14 +20,15 @@ test.describe('data stays on this machine', () => {
       },
     );
     const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
+    const guided = guidedPage(page);
 
-    await startMonitoring(page, backend);
+    await startRun(page, backend);
+    await expect(guided.outlines).toHaveCount(3);
     backend.pushReading({ bpm: 73.3, quality_db: 9.4, state: 'ok' });
-    await expect(monitor.bpmValue).toHaveText(/^(73\.3|73)$/);
+    await expect(guided.liveReadings.getByText(/^(73\.3|73)$/)).toBeVisible();
     await waitForMoreFrames(backend, 5);
-    await monitor.stop.click();
-    await expect(monitor.start).toBeVisible();
+    await guided.stop.click();
+    await expect(guided.startAgain).toBeVisible();
 
     expect(backend.connections.length).toBeGreaterThan(0);
     expect(backend.connections.every((connection) => connection.closedAt !== null)).toBe(true);
@@ -36,24 +37,6 @@ test.describe('data stays on this machine', () => {
     expect(
       requests.filter((url) => !url.startsWith(`${PAGE_ORIGIN}/`) && !url.startsWith('data:') && !url.startsWith('blob:')),
     ).toEqual([]);
-  });
-
-  test('keeps nothing in browser storage after a session', async ({ page }) => {
-    const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-
-    await startMonitoring(page, backend);
-    backend.pushReading({ bpm: 73.3, quality_db: 9.4, state: 'ok' });
-    await expect(monitor.bpmValue).toHaveText(/^(73\.3|73)$/);
-    await monitor.stop.click();
-    await expect(monitor.start).toBeVisible();
-
-    const stored = await page.evaluate(async () => ({
-      local: localStorage.length,
-      session: sessionStorage.length,
-      databases: (await indexedDB.databases()).length,
-    }));
-    expect(stored).toEqual({ local: 0, session: 0, databases: 0 });
   });
 
   test('keeps guided run readings in page memory: no storage writes and nothing sent but frames', async ({ page }) => {

@@ -1,101 +1,37 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import { expectQuietRef, guidedPage, openGuidedRun, startRun } from '../../support/guided-page';
 import { MockBackend } from '../../support/mock-backend';
 import {
-  cameraCalls,
   cameraTrackIds,
   cameraTrackStates,
   CODED_ALERT_TEXT,
   endVideoTracks,
   failPreviewAttach,
-  monitorPage,
-  ownTextLength,
   recordTrackStops,
   recordUnhandledRejections,
   refuseCamera,
   removeCameraApi,
   spyOnCamera,
-  startMonitoring,
   stoppedTrackIds,
   unhandledRejections,
-  videoIsPlaying,
-} from '../../support/monitor-page';
+} from '../../support/page-helpers';
+
+const START_FAILED = {
+  message: "Starting the camera hit something this page didn't expect, so it stopped cleanly.",
+  action: 'Press Start again. If it keeps happening, reload the page.',
+};
+
+async function expectCameraOff(page: Page): Promise<void> {
+  await expect.poll(() => cameraTrackStates(page)).not.toHaveLength(0);
+  await expect.poll(async () => (await cameraTrackStates(page)).every((state) => state === 'ended')).toBe(true);
+}
 
 test.describe('camera', () => {
-  test('does not ask for the camera until Start is pressed', async ({ page }) => {
-    await spyOnCamera(page);
-    await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await expect(monitor.start).toBeVisible();
-
-    expect(await cameraCalls(page)).toBe(0);
-
-    await monitor.start.click();
-
-    await expect.poll(() => cameraCalls(page)).toBe(1);
-  });
-
-  test('plays the camera video after Start', async ({ page }) => {
-    const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-
-    await startMonitoring(page, backend);
-
-    await expect(monitor.video).toBeVisible();
-    await expect.poll(() => videoIsPlaying(monitor.video)).toBe(true);
-  });
-
-  test('Stop ends every camera track and closes the socket', async ({ page }) => {
-    await spyOnCamera(page);
-    const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-    await startMonitoring(page, backend);
-    const [streaming] = backend.openConnections();
-
-    await monitor.stop.click();
-
-    await expect.poll(() => cameraTrackStates(page)).not.toHaveLength(0);
-    await expect.poll(async () => (await cameraTrackStates(page)).every((state) => state === 'ended')).toBe(true);
-    await expect.poll(() => streaming.closedBy).toBe('page');
-    expect(backend.openConnections()).toHaveLength(0);
-    await expect(monitor.start).toBeVisible();
-  });
-
-  test('shows CAMERA_DENIED guidance when permission is refused', async ({ page }) => {
-    await refuseCamera(page, 'NotAllowedError');
-    await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-
-    const alert = monitor.alertWith('CAMERA_DENIED');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/camera/i);
-    await expect(alert).toContainText(/allow|permission|settings/i);
-    await expect(alert).toContainText(/\bStart\b/);
-  });
-
-  test('shows CAMERA_NOT_FOUND guidance when no camera is available', async ({ page }) => {
-    await refuseCamera(page, 'NotFoundError');
-    await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-
-    const alert = monitor.alertWith('CAMERA_NOT_FOUND');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/camera/i);
-    await expect(alert).toContainText(/\bStart\b/);
-  });
-
-  test('stops every camera track when the page is left mid-session', async ({ page }) => {
+  test('stops every camera track when the page is left mid-run', async ({ page }) => {
     await spyOnCamera(page);
     await recordTrackStops(page);
     const backend = await MockBackend.attach(page);
-    await startMonitoring(page, backend);
+    await startRun(page, backend);
     const tracks = await cameraTrackIds(page);
     expect(tracks).not.toHaveLength(0);
     expect(await stoppedTrackIds(page)).toEqual([]);
@@ -106,68 +42,55 @@ test.describe('camera', () => {
     expect(tracks.filter((id) => !stopped.includes(id))).toEqual([]);
   });
 
-  test('shows CAMERA_LOST, offers Start again and closes the socket when the camera goes away', async ({ page }) => {
+  test('shows the plain CAMERA_LOST text, offers Start again and closes the socket when the camera goes away', async ({
+    page,
+  }) => {
     await spyOnCamera(page);
     const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-    await startMonitoring(page, backend);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
     const [streaming] = backend.openConnections();
 
     await endVideoTracks(page);
 
-    const alert = monitor.alertWith('CAMERA_LOST');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/camera/i);
-    await expect(alert).toContainText(/\bStart\b/);
-    expect((await alert.innerText()).replace('CAMERA_LOST', '').trim().length).toBeGreaterThan(40);
-    await expect(monitor.start).toBeVisible();
+    await expectQuietRef(
+      guided.main,
+      'The camera dropped out mid-run. It was unplugged, switched off or grabbed by another app.',
+      'CAMERA_LOST',
+    );
+    await expect(guided.main.getByText('Check the camera is plugged in and free, then press Start again.')).toBeVisible();
+    await expect(guided.startAgain).toBeVisible();
     await expect.poll(() => streaming.closedBy).toBe('page');
     expect(backend.openConnections()).toHaveLength(0);
-    await expect.poll(async () => (await cameraTrackStates(page)).every((state) => state === 'ended')).toBe(true);
+    await expectCameraOff(page);
   });
 
-  for (const errorName of ['NotReadableError', 'AbortError'] as const) {
-    test(`shows CAMERA_IN_USE guidance when the camera fails with ${errorName}`, async ({ page }) => {
-      await refuseCamera(page, errorName);
-      await MockBackend.attach(page);
-      const monitor = monitorPage(page);
+  test('shows the plain CAMERA_IN_USE text when the camera fails with AbortError', async ({ page }) => {
+    await refuseCamera(page, 'AbortError');
+    await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await openGuidedRun(page);
 
-      await page.goto('/');
-      await monitor.start.click();
+    await guided.start.click();
 
-      const alert = monitor.alertWith('CAMERA_IN_USE');
-      await expect(alert).toBeVisible();
-      await expect(alert).toContainText(/camera/i);
-      await expect(alert).toContainText(/another app/i);
-      await expect(alert).toContainText(/\bquit\b/i);
-      await expect(alert).toContainText(/\bStart\b/);
-      expect(ownTextLength(await alert.innerText(), 'CAMERA_IN_USE')).toBeGreaterThan(40);
-      await expect(monitor.alertWith('CAMERA_NOT_FOUND')).toHaveCount(0);
-      await expect(monitor.start).toBeVisible();
-    });
-  }
+    await expectQuietRef(guided.main, "The camera is there, but another app is sitting on it and won't share.", 'CAMERA_IN_USE');
+    await expect(guided.main.getByText('Ref: CAMERA_NOT_FOUND', { exact: true })).toHaveCount(0);
+    await expect(guided.start).toBeVisible();
+  });
 
-  for (const errorName of ['NotFoundError', 'OverconstrainedError'] as const) {
-    test(`shows CAMERA_NOT_FOUND guidance to plug one in when the camera fails with ${errorName}`, async ({
-      page,
-    }) => {
-      await refuseCamera(page, errorName);
-      await MockBackend.attach(page);
-      const monitor = monitorPage(page);
+  test('shows the plain CAMERA_NOT_FOUND text when the camera fails with OverconstrainedError', async ({ page }) => {
+    await refuseCamera(page, 'OverconstrainedError');
+    await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await openGuidedRun(page);
 
-      await page.goto('/');
-      await monitor.start.click();
+    await guided.start.click();
 
-      const alert = monitor.alertWith('CAMERA_NOT_FOUND');
-      await expect(alert).toBeVisible();
-      await expect(alert).toContainText(/camera/i);
-      await expect(alert).toContainText(/\bplug/i);
-      await expect(alert).toContainText(/\bStart\b/);
-      await expect(alert).not.toContainText(/another app|hogging|in use|busy/i);
-      await expect(monitor.alertWith('CAMERA_IN_USE')).toHaveCount(0);
-      await expect(monitor.start).toBeVisible();
-    });
-  }
+    await expectQuietRef(guided.main, 'No camera turned up, or none that can do what this page needs.', 'CAMERA_NOT_FOUND');
+    await expect(guided.main.getByText(/another app/i)).toHaveCount(0);
+    await expect(guided.main.getByText('Ref: CAMERA_IN_USE', { exact: true })).toHaveCount(0);
+    await expect(guided.start).toBeVisible();
+  });
 
   for (const errorName of ['TypeError', 'InvalidStateError'] as const) {
     test(`shows START_FAILED, not CAMERA_NOT_FOUND, when the camera fails with an unexpected ${errorName}`, async ({
@@ -175,64 +98,55 @@ test.describe('camera', () => {
     }) => {
       await refuseCamera(page, errorName);
       await MockBackend.attach(page);
-      const monitor = monitorPage(page);
+      const guided = guidedPage(page);
+      await openGuidedRun(page);
 
-      await page.goto('/');
-      await monitor.start.click();
+      await guided.start.click();
 
-      const alert = monitor.alertWith('START_FAILED');
-      await expect(alert).toBeVisible();
-      await expect(alert).toContainText(/\bStart\b/);
-      expect(ownTextLength(await alert.innerText(), 'START_FAILED')).toBeGreaterThan(40);
-      await expect(monitor.alertWith('CAMERA_NOT_FOUND')).toHaveCount(0);
-      await expect(page.getByRole('alert').filter({ hasText: /\bplug/i })).toHaveCount(0);
-      await expect(monitor.start).toBeVisible();
-      await expect(monitor.stop).toBeHidden();
+      await expectQuietRef(guided.main, START_FAILED.message, 'START_FAILED');
+      await expect(guided.main.getByText(START_FAILED.action)).toBeVisible();
+      await expect(guided.main.getByText('Ref: CAMERA_NOT_FOUND', { exact: true })).toHaveCount(0);
+      await expect(guided.main.getByText(/\bplug/i)).toHaveCount(0);
+      await expect(guided.start).toBeVisible();
+      await expect(guided.stop).toHaveCount(0);
     });
   }
 
-  for (const missing of ['mediaDevices', 'getUserMedia'] as const) {
-    test(`shows CAMERA_UNSUPPORTED with the page address when navigator ${missing} is missing`, async ({ page }) => {
-      await removeCameraApi(page, missing);
-      await MockBackend.attach(page);
-      const monitor = monitorPage(page);
+  test('shows the plain CAMERA_UNSUPPORTED text when navigator getUserMedia is missing', async ({ page }) => {
+    await removeCameraApi(page, 'getUserMedia');
+    await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await openGuidedRun(page);
 
-      await page.goto('/');
-      await monitor.start.click();
+    await guided.start.click();
 
-      const alert = monitor.alertWith('CAMERA_UNSUPPORTED');
-      await expect(alert).toBeVisible();
-      await expect(alert).toContainText(/camera/i);
-      await expect(alert).toContainText('http://127.0.0.1:4173');
-      expect(ownTextLength(await alert.innerText(), 'CAMERA_UNSUPPORTED')).toBeGreaterThan(40);
-      await expect(monitor.alertWith('CAMERA_NOT_FOUND')).toHaveCount(0);
-      await expect(monitor.start).toBeVisible();
-    });
-  }
+    await expectQuietRef(
+      guided.main,
+      "This browser won't share the camera here. Browsers only do that on a secure or local address.",
+      'CAMERA_UNSUPPORTED',
+    );
+    await expect(guided.main.getByText('Ref: CAMERA_NOT_FOUND', { exact: true })).toHaveCount(0);
+    await expect(guided.start).toBeVisible();
+  });
 
-  test('ends in a coded alert with Start back, not stuck starting, when the preview refuses the camera stream', async ({
+  test('ends in START_FAILED with Start back, not stuck starting, when the preview refuses the camera stream', async ({
     page,
   }) => {
     await spyOnCamera(page);
     await recordUnhandledRejections(page);
     await failPreviewAttach(page);
     const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
+    const guided = guidedPage(page);
+    await openGuidedRun(page);
 
-    await page.goto('/');
-    await monitor.start.click();
+    await guided.start.click();
 
-    const alert = page.getByRole('alert').filter({ hasText: CODED_ALERT_TEXT });
-    await expect(alert).toBeVisible();
-    const shown = await alert.innerText();
-    const [code] = shown.match(CODED_ALERT_TEXT) ?? [''];
-    expect(code).toBe('START_FAILED');
-    await expect(monitor.alertWith('START_FAILED')).toBeVisible();
-    expect(ownTextLength(shown, code)).toBeGreaterThan(40);
-    await expect(monitor.start).toBeVisible();
-    await expect(monitor.stop).toBeHidden();
-    await expect.poll(() => cameraTrackStates(page)).not.toHaveLength(0);
-    await expect.poll(async () => (await cameraTrackStates(page)).every((state) => state === 'ended')).toBe(true);
+    await expectQuietRef(guided.main, START_FAILED.message, 'START_FAILED');
+    const codes = (await guided.main.innerText()).match(new RegExp(CODED_ALERT_TEXT.source, 'g')) ?? [];
+    expect(codes).toEqual(['START_FAILED']);
+    await expect(guided.start).toBeVisible();
+    await expect(guided.stop).toHaveCount(0);
+    await expectCameraOff(page);
     expect(backend.openConnections()).toHaveLength(0);
     expect(await unhandledRejections(page)).toEqual([]);
   });

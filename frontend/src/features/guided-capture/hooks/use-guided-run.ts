@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useEffectEvent, useReducer, useRef, useState } from "react"
-import { MonitorSession, NOTICE_SHOWN_MS } from "@/features/monitor"
 import { Chime } from "@/features/guided-capture/lib/chime"
 import { guidedReducer, initialGuidedState } from "@/features/guided-capture/lib/guided-reducer"
+import { MonitorSession } from "@/features/guided-capture/lib/monitor-session"
 import { PAGE_HIDDEN, SOCKET_BUSY } from "@/features/guided-capture/lib/run-copy"
 import { runStage, tabTitle, TICK_MS } from "@/features/guided-capture/lib/run-plan"
 import { SOCKET_UNAVAILABLE } from "@/lib/socket/socket-errors"
 
-export function useGuidedRun(active: boolean) {
+const NOTICE_SHOWN_MS = 5000
+
+export function useGuidedRun() {
   const [state, dispatch] = useReducer(guidedReducer, initialGuidedState)
   const [chimeOn, setChimeOn] = useState(true)
   const [chime] = useState(() => new Chime())
@@ -71,12 +73,6 @@ export function useGuidedRun(active: boolean) {
   }, [chime])
 
   useEffect(() => {
-    if (!active) {
-      sessionRef.current?.stop()
-    }
-  }, [active])
-
-  useEffect(() => {
     if (state.status !== "running") {
       return undefined
     }
@@ -109,11 +105,11 @@ export function useGuidedRun(active: boolean) {
   }, [stage])
 
   useEffect(() => {
-    document.title = active && title !== null ? title : pageTitle
+    document.title = title ?? pageTitle
     return () => {
       document.title = pageTitle
     }
-  }, [active, title, pageTitle])
+  }, [title, pageTitle])
 
   const noticeId = state.monitor.notice?.id ?? null
   useEffect(() => {

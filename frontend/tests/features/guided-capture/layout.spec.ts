@@ -1,7 +1,60 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { fontFamily, guidedPage, openGuidedRun, pushAndConfirm, startRun } from '../../support/guided-page';
 import { MockBackend } from '../../support/mock-backend';
-import { boxOf } from '../../support/monitor-page';
+import { boxOf } from '../../support/page-helpers';
+
+const PAGE_BACKGROUND = { light: 'rgb(247, 247, 245)', dark: 'rgb(20, 20, 20)' } as const;
+
+function backgroundBehind(page: Page, x: number, y: number): Promise<string> {
+  return page.evaluate(
+    ([left, top]) => {
+      for (let node = document.elementFromPoint(left, top); node !== null; node = node.parentElement) {
+        const colour = getComputedStyle(node).backgroundColor;
+        if (colour !== 'rgba(0, 0, 0, 0)' && colour !== 'transparent') {
+          return colour;
+        }
+      }
+      return getComputedStyle(document.documentElement).backgroundColor;
+    },
+    [x, y],
+  );
+}
+
+test.describe('the guided run as the only page', () => {
+  test('shows one main landmark, the brand as the one level 1 heading, and no tabs', async ({ page }) => {
+    await MockBackend.attach(page);
+    const guided = guidedPage(page);
+
+    await openGuidedRun(page);
+
+    await expect(page.getByRole('main')).toHaveCount(1);
+    await expect(page.getByRole('main')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('pulse-frame');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect(page.getByRole('tablist')).toHaveCount(0);
+    await expect(page.getByRole('tab')).toHaveCount(0);
+    await expect(page.getByRole('tabpanel')).toHaveCount(0);
+    await expect(page.getByText('Live monitor')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Start', exact: true })).toHaveCount(1);
+    await expect(guided.start).toBeVisible();
+    await expect(page).toHaveTitle('pulse-frame');
+  });
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`fills the page with the ${colorScheme} page background from the first load`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await MockBackend.attach(page);
+      const viewport = page.viewportSize();
+      expect(viewport).not.toBeNull();
+
+      await openGuidedRun(page);
+
+      expect(await backgroundBehind(page, 2, (viewport?.height ?? 0) - 2)).toBe(PAGE_BACKGROUND[colorScheme]);
+      expect(await backgroundBehind(page, (viewport?.width ?? 0) - 2, 2)).toBe(PAGE_BACKGROUND[colorScheme]);
+    });
+  }
+});
 
 test.describe('guided run layout', () => {
   test('sets prose in the system sans and numbers in JetBrains Mono', async ({ page }) => {
@@ -46,8 +99,8 @@ test.describe('guided run layout', () => {
       await openGuidedRun(page);
 
       const button = await boxOf(guided.start);
-      const steps = await boxOf(guided.panel.getByRole('list', { name: 'Capture steps' }));
-      const card = await boxOf(guided.panel);
+      const steps = await boxOf(guided.main.getByRole('list', { name: 'Capture steps' }));
+      const card = await boxOf(guided.main);
 
       expect(button.y + button.height).toBeLessThanOrEqual(steps.y);
       expect(button.x + button.width).toBeGreaterThanOrEqual(card.x + card.width * 0.75);

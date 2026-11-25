@@ -1,7 +1,7 @@
-import { initialMonitorState, monitorReducer, type MonitorState } from "@/features/monitor"
+import { initialMonitorState, monitorReducer } from "@/features/guided-capture/lib/monitor-reducer"
 import { NO_READING_FACE, NO_READING_PULSE } from "@/features/guided-capture/lib/run-copy"
 import { FRESH_READING_MS, RESULT_WINDOW_MS, RUN_MS } from "@/features/guided-capture/lib/run-plan"
-import type { GuidedAction, GuidedState, RunResult, WindowTotals } from "@/features/guided-capture/types"
+import type { GuidedAction, GuidedState, MonitorState, RunResult, WindowTotals } from "@/features/guided-capture/types"
 
 const EMPTY_TOTALS: WindowTotals = { okMs: 0, bpmMs: 0, noFaceMs: 0 }
 

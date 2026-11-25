@@ -1,10 +1,10 @@
-import { Button } from "@/components/ui/button"
 import { LiveReadings } from "@/features/guided-capture/components/live-readings"
 import { PulseTrace } from "@/features/guided-capture/components/pulse-trace"
 import { RunAlerts } from "@/features/guided-capture/components/run-alerts"
 import { RunPlanList } from "@/features/guided-capture/components/run-plan-list"
 import { RunProgress } from "@/features/guided-capture/components/run-progress"
 import { RunResults } from "@/features/guided-capture/components/run-results"
+import { ToggleButton } from "@/features/guided-capture/components/toggle-button"
 import { WATCH_TIP } from "@/features/guided-capture/lib/run-copy"
 import type { GuidedState, Stage } from "@/features/guided-capture/types"
 
@@ -74,14 +74,7 @@ export function RunPanel({ state, stage, elapsed, hint, chimeOn, onToggleChime }
       <h2 className={HEADLINE}>Two and a half minutes, mostly doing nothing.</h2>
       <RunPlanList />
       <p>Leave your watch alone during the run. Check its history afterwards.</p>
-      <Button
-        variant="outline"
-        aria-pressed={chimeOn}
-        onClick={onToggleChime}
-        className="h-auto min-h-11 self-start rounded-md border-(--ds-edge) bg-(--ds-surface) px-3.5 text-base font-semibold text-(--ds-text) focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-(--ds-count) dark:border-(--ds-edge) dark:bg-(--ds-surface)"
-      >
-        {`Chime at start and end: ${chimeOn ? "on" : "off"}`}
-      </Button>
+      <ToggleButton label="Chime at start and end" pressed={chimeOn} onToggle={onToggleChime} />
       <RunResults result={null} />
     </div>
   )

@@ -1,5 +1,5 @@
 import { BAD_REPLY, SOCKET_UNAVAILABLE } from "@/lib/socket/socket-errors"
-import type { MonitorAction, MonitorState } from "@/features/monitor/types"
+import type { MonitorAction, MonitorState } from "@/features/guided-capture/types"
 
 export const initialMonitorState: MonitorState = {
   phase: "idle",
