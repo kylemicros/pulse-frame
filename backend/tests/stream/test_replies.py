@@ -183,7 +183,7 @@ def test_fixture_frame_gets_its_reading_then_one_frame_reply_with_usable_patches
     expected = named_region_polygons(face)
 
     assert sorted(first.types[:2]) == ["bpm", "pulse"]
-    assert first.types[2:] == ["frame"]
+    assert first.types[2:] == ["hrv", "frame"]
     assert second.types == ["frame"]
     reply = frame_reply(first)
     assert reply["t"] == START_MS
@@ -304,7 +304,7 @@ def test_reading_and_pulse_come_on_the_first_frame_then_once_a_second(
     for turn, is_due in zip(session.turns, due, strict=True):
         if is_due:
             assert sorted(turn.types[:2]) == ["bpm", "pulse"]
-            assert turn.types[2:] == ["frame"]
+            assert turn.types[2:] == ["hrv", "frame"]
         else:
             assert turn.types == ["frame"]
     assert len(session.processor.waveforms) == sum(due)

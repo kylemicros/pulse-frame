@@ -37,7 +37,7 @@ export function RunPanel({ state, stage, elapsed, hint, chimeOn, onToggleChime }
           </p>
         )}
         <RunAlerts errors={[state.monitor.error, state.monitor.notice]} />
-        <LiveReadings monitor={state.monitor} lastGoodBpm={state.lastGoodBpm} />
+        <LiveReadings monitor={state.monitor} lastGoodBpm={state.lastGoodBpm} stage={stage} />
         <PulseTrace samples={state.monitor.samples} />
       </div>
     )

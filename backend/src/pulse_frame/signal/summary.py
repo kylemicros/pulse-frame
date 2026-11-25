@@ -261,6 +261,8 @@ def decide_no_reading(
     newest_ms: float,
     had_reading: bool,
 ) -> NoReading | None:
+    if result.bpm is not None:
+        return None
     weak = too_weak_decision(result, checks, newest_ms)
     if weak is not None:
         return weak

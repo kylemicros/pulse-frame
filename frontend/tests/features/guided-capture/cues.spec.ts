@@ -13,7 +13,7 @@ import {
   spyOnSounds,
   startRun,
 } from '../../support/guided-page';
-import { MockBackend } from '../../support/mock-backend';
+import { hrv, MockBackend } from '../../support/mock-backend';
 import { pageNow, refuseCamera, watchedText, watchText } from '../../support/page-helpers';
 
 const MILESTONES = [
@@ -30,6 +30,7 @@ const SLICE_MS = 2500;
 
 async function runWithSteadyReadings(page: Page, backend: MockBackend): Promise<void> {
   const guided = guidedPage(page);
+  backend.setHrv(hrv({ rmssd_ms: 40.2, sdnn_ms: 45.1, minute_bpm: 68.2, minute_count: 70 }));
   await pushAndConfirm(page, backend, { bpm: 68.2, quality_db: 9.4, state: 'ok' });
   await advanceRun(page, backend, 70000, SLICE_MS);
   await pushAndConfirm(page, backend, { bpm: 67.8, quality_db: 9.4, state: 'ok' });

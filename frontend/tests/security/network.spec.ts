@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { MockBackend, STREAM_URL } from '../support/mock-backend';
+import { hrv, MockBackend, STREAM_URL } from '../support/mock-backend';
 import { advanceRun, advanceRunUntil, guidedPage, pushAndConfirm, startRun } from '../support/guided-page';
 import { waitForMoreFrames } from '../support/page-helpers';
 
@@ -83,6 +83,7 @@ test.describe('data stays on this machine', () => {
     const guided = guidedPage(page);
     await startRun(page, backend);
 
+    backend.setHrv(hrv({ rmssd_ms: 42.3, sdnn_ms: 48.8, minute_bpm: 69.1, minute_count: 71 }));
     await pushAndConfirm(page, backend, { bpm: 69.1, quality_db: 9.3, state: 'ok' });
     await advanceRun(page, backend, 100000);
     await pushAndConfirm(page, backend, { bpm: 68.9, quality_db: 9.3, state: 'ok' });

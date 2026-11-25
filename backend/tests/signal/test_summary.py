@@ -16,6 +16,7 @@ from tests.counted_runs import (
     WARMED_UP_RUNS,
     chain,
     hand_checks,
+    heart_rate_under_the_reading_floor,
     ramped,
     replayed,
 )
@@ -30,6 +31,8 @@ STRONG_DB = 10.0
 NAN = float("nan")
 FLOOR_BEATS = 45
 TINY_SHARE_UNDER = 2_500
+SOME_WINDOWS_CLEAR = "some_windows_clear"
+SOME_WINDOWS_CLEAR_PERCENT = 26
 MOVED_DEFINITIONS = [
     "def beside_holes",
     "def counted_intervals",
@@ -59,7 +62,6 @@ RUNS_WITH_A_READING = [
     "reading_then_under_the_floor",
 ]
 DECISIONS: dict[str, tuple[str, str | None, int | None]] = {
-    "some_windows_clear": ("READING_FLOOR_NOT_CLEARED", "faint_pulse", 26),
     "no_window_clears": ("READING_FLOOR_NOT_CLEARED", "faint_pulse", 0),
     "too_weak": ("SIGNAL_TOO_WEAK", None, None),
     "face_left_view": ("READING_FLOOR_NOT_CLEARED", "face_left_view", None),
@@ -353,6 +355,23 @@ def test_the_decision_on_a_counted_run_is_the_one_the_replay_prints(kind: str) -
     assert shown == printed_percent
 
 
+def test_a_counted_run_with_a_minute_bpm_gets_no_decision_but_the_replay_share() -> (
+    None
+):
+    result = replayed(SOME_WINDOWS_CLEAR)
+    counted = replay.summarise(result)
+
+    assert counted.bpm is not None
+    assert replayed_decision(SOME_WINDOWS_CLEAR) is None
+    printed = summary.floor_decision(
+        counted, result.window_checks, bool(result.readings)
+    )
+    assert printed is not None
+    assert (printed.code, printed.why) == ("READING_FLOOR_NOT_CLEARED", "faint_pulse")
+    assert printed.clear_percent is not None
+    assert half_up(printed.clear_percent) == SOME_WINDOWS_CLEAR_PERCENT
+
+
 def test_replay_keeps_no_copy_of_the_logic_moved_into_signal() -> None:
     source = inspect.getsource(replay)
 
@@ -427,3 +446,24 @@ def test_a_minute_under_the_floor_drops_its_hrv_but_keeps_count_and_share() -> N
 def span_count(ibi_ms: float) -> int:
     intervals, _ = ramped(ibi_ms, NEWEST_MS)
     return len(summary.newest_span(intervals, NEWEST_MS))
+
+
+def test_a_minute_bpm_under_the_reading_floor_is_a_reading_with_no_decision() -> None:
+    intervals, checks, newest_ms = heart_rate_under_the_reading_floor()
+
+    result = summary.summarise(intervals, newest_ms, checks)
+
+    assert result.bpm is not None
+    assert (result.rmssd_ms, result.sdnn_ms) == (None, None)
+    assert summary.decide_no_reading(result, checks, newest_ms, False) is None
+
+
+def test_the_replay_floor_decision_for_a_bpm_without_variation_is_unchanged() -> None:
+    intervals, checks, newest_ms = heart_rate_under_the_reading_floor()
+    result = summary.summarise(intervals, newest_ms, checks)
+
+    decision = summary.floor_decision(result, checks, False)
+
+    assert decision == summary.NoReading(
+        code="READING_FLOOR_NOT_CLEARED", why="faint_pulse", clear_percent=0.0
+    )

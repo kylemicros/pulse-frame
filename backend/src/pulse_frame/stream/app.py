@@ -192,6 +192,8 @@ class StreamSession:
                     bpm_message(timestamp_ms, result.reading),
                 )
             )
+        if processed.hrv is not None:
+            replies.append(processed.hrv)
         replies.append(frame_message(timestamp_ms, result))
         return replies
 

@@ -1,16 +1,48 @@
-import type { Stage } from "@/features/guided-capture/types"
+import type { Stage, VariationKind } from "@/features/guided-capture/types"
 import type { AppError } from "@/lib/errors"
+import type { HrvMessage } from "@/lib/socket/messages"
 
-export const NO_READING_PULSE: AppError = {
+const LIGHT_ADVICE = "Face a window so the light is even, hold still, then press Start again."
+
+const NO_READING: AppError = {
   code: "NO_READING",
-  message: "Your pulse never showed clearly enough to count.",
-  action: "Face a window so the light is even, hold still, then press Start again.",
+  message: "Not enough steady beats came through in the last counted minute.",
+  action: "Hold still with your shoulders loose, then press Start again.",
 }
 
-export const NO_READING_FACE: AppError = {
-  code: "NO_READING",
-  message: "Your face kept leaving the camera's view.",
+const SIGNAL_TOO_WEAK: AppError = {
+  code: "SIGNAL_TOO_WEAK",
+  message: "Your pulse never showed clearly enough to count.",
+  action: LIGHT_ADVICE,
+}
+
+const FACE_LEFT_VIEW: AppError = {
+  code: "READING_FLOOR_NOT_CLEARED",
+  message: "Your face kept leaving the camera's view, so your pulse couldn't be read.",
   action: "Sit facing the camera and keep your face in view, then press Start again.",
+}
+
+function faintPulseMessage(clearPercent: number): string {
+  const shown = Math.round(clearPercent)
+  if (clearPercent <= 0) {
+    return "Your pulse never showed clearly during the counted part."
+  }
+  return shown < 1
+    ? "Your pulse showed clearly in under 1% of the counted part."
+    : `Your pulse showed clearly in only ${shown}% of the counted part.`
+}
+
+export function noReadingReason(last: HrvMessage | null): AppError {
+  if (last?.no_reading === "SIGNAL_TOO_WEAK") {
+    return SIGNAL_TOO_WEAK
+  }
+  if (last?.no_reading !== "READING_FLOOR_NOT_CLEARED") {
+    return NO_READING
+  }
+  if (last.why === "faint_pulse" && last.clear_percent !== null) {
+    return { code: last.no_reading, message: faintPulseMessage(last.clear_percent), action: LIGHT_ADVICE }
+  }
+  return last.why === "face_left_view" ? FACE_LEFT_VIEW : NO_READING
 }
 
 export const PAGE_HIDDEN: AppError = {
@@ -176,9 +208,23 @@ export const RUN_STOPPED_TEXT = "Run stopped. Press Start again for a fresh run.
 export const DISCLAIMER =
   "For wellness and curiosity only. pulse-frame is not a medical device, and its numbers are estimates."
 
-export const VARIATION_LATER = "Both variation numbers fill in with a later update."
+export const VARIATION_LINE =
+  "Both show how much the gap between your beats shifts, in ms (thousandths of a second). Compare them only with your own runs."
 
 export const NOT_ENOUGH_BEATS = "Not enough beats yet"
+
+export const NOT_ENOUGH_BEATS_DONE = "Not enough beats this time"
+
+export const VARIATION_LABEL: Record<VariationKind, string> = {
+  "beat-to-beat": "Beat to beat variation",
+  overall: "Overall rhythm variation",
+}
+
+export const VARIATION_WINDOW: Record<Exclude<Stage, "get-comfy">, Record<VariationKind, string>> = {
+  "warm-up": { "beat-to-beat": "Starts with counting", overall: "Starts with counting" },
+  counted: { "beat-to-beat": "Counted part so far", overall: "Newest counted minute" },
+  result: { "beat-to-beat": "Over the whole counted part.", overall: "Last counted minute." },
+}
 
 export const LIVE_WINDOW_TEXT = "Last 20 s"
 

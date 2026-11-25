@@ -35,6 +35,11 @@ from tests.stream.wire import (
 )
 
 START_MS = 1000
+FRAME_TOO_LARGE_ACTION = (
+    "Send JPEG frames at 640 x 480; the page lowers the quality on its own"
+    " when a frame is over the limit. If this keeps happening, light the"
+    " room more evenly or sit in front of a plainer background."
+)
 FAILED_MS = 2000
 BETWEEN_MS = 1500
 AFTER_MS = 2033
@@ -252,3 +257,10 @@ def test_full_session_at_debug_logs_and_writes_no_frame_data(
         assert not [value for value in landmarks if value in line], line[:300]
         assert "array(" not in line
         assert CLIENT_TEXT not in line
+
+
+def test_frame_too_large_tells_the_sender_the_page_lowers_its_own_quality() -> None:
+    entry = WIRE_ERRORS["FRAME_TOO_LARGE"]
+
+    assert entry.action == FRAME_TOO_LARGE_ACTION
+    assert "0.8" not in entry.action

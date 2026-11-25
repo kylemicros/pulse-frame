@@ -14,7 +14,8 @@ FIRST_STARTS_MS = 1_000
 SECOND_STARTS_MS = 50_000
 STEP_MS = 100
 WIRE_FRAMES = 25
-SENT_TYPES = {"frame", "pulse", "bpm", "error"}
+DUE_TURNS = 3
+SENT_TYPES = {"frame", "pulse", "bpm", "hrv", "error"}
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,7 @@ def test_each_connection_gets_its_own_hrv_tracker_fed_every_frame_off_the_loop(
     assert hrv.built[0].fed[0].regions is not None
 
 
-def test_with_hrv_live_the_stream_still_sends_only_frame_pulse_bpm_and_error(
+def test_the_stream_sends_one_hrv_reply_after_bpm_on_every_due_frame(
     factory: ProcessorFactory, clock: FakeClock, astronaut_jpeg: bytes
 ) -> None:
     hrv = HrvFactory()
@@ -96,5 +97,15 @@ def test_with_hrv_live_the_stream_still_sends_only_frame_pulse_bpm_and_error(
 
     sent = {kind for turn in turns for kind in turn.types}
     assert sent <= SENT_TYPES
-    assert "bpm" in sent
     assert len(hrv.built[0].fed) == WIRE_FRAMES
+    due = [turn.find("bpm") is not None for turn in turns]
+    assert due[0]
+    assert sum(due) == DUE_TURNS
+    for turn, is_due in zip(turns, due, strict=True):
+        if not is_due:
+            assert turn.types == ["frame"], turn.types
+            continue
+        assert turn.types == ["pulse", "bpm", "hrv", "frame"], turn.types
+        reply = turn.find("hrv")
+        assert reply is not None
+        assert reply["t"] == turn.reply["t"]

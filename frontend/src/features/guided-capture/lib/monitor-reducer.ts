@@ -8,6 +8,7 @@ export const initialMonitorState: MonitorState = {
   latestT: null,
   reading: null,
   acquiringSince: null,
+  variation: null,
   samples: [],
   error: null,
   notice: null,
@@ -18,6 +19,7 @@ const CLEARED_READINGS = {
   latestT: null,
   reading: null,
   acquiringSince: null,
+  variation: null,
   samples: [],
 } satisfies Partial<MonitorState>
 
@@ -32,6 +34,9 @@ function applyMessage(state: MonitorState, action: Extract<MonitorAction, { type
   }
   if (message.type === "pulse") {
     return { ...state, samples: message.samples }
+  }
+  if (message.type === "hrv") {
+    return { ...state, variation: message }
   }
   const stillAcquiring = state.reading?.state === "acquiring" && state.acquiringSince !== null
   const acquiringSince = message.state === "acquiring" ? (stillAcquiring ? state.acquiringSince : message.t) : null

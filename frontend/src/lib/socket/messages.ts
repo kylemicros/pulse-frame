@@ -41,7 +41,25 @@ export type ErrorMessage = {
   action: string
 }
 
-export type ServerMessage = FrameMessage | PulseMessage | BpmMessage | ErrorMessage
+export type NoReadingCode = "SIGNAL_TOO_WEAK" | "READING_FLOOR_NOT_CLEARED"
+
+export type NoReadingWhy = "face_left_view" | "faint_pulse"
+
+export type HrvMessage = {
+  type: "hrv"
+  t: number
+  rmssd_ms: number | null
+  sdnn_ms: number | null
+  minute_bpm: number | null
+  minute_count: number
+  bpm_low: number | null
+  bpm_high: number | null
+  no_reading: NoReadingCode | null
+  why: NoReadingWhy | null
+  clear_percent: number | null
+}
+
+export type ServerMessage = FrameMessage | PulseMessage | BpmMessage | HrvMessage | ErrorMessage
 
 type Fields = Record<string, unknown>
 
@@ -95,6 +113,36 @@ function isBpm(value: Fields): boolean {
   )
 }
 
+const HRV_NUMBERS = ["rmssd_ms", "sdnn_ms", "minute_bpm", "bpm_low", "bpm_high", "clear_percent"] as const
+
+function hasHrvNoReading(value: Fields): boolean {
+  const { no_reading: code, why } = value
+  if ((value.clear_percent !== null) !== (why === "faint_pulse")) {
+    return false
+  }
+  if (code === null) {
+    return why === null
+  }
+  if (value.minute_bpm !== null) {
+    return false
+  }
+  if (code === "SIGNAL_TOO_WEAK") {
+    return why === null
+  }
+  return code === "READING_FLOOR_NOT_CLEARED" && (why === "face_left_view" || why === "faint_pulse")
+}
+
+function isHrv(value: Fields): boolean {
+  return (
+    isFiniteNumber(value.t) &&
+    isFiniteNumber(value.minute_count) &&
+    Number.isInteger(value.minute_count) &&
+    value.minute_count >= 0 &&
+    HRV_NUMBERS.every((key) => isNumberOrNull(value[key])) &&
+    hasHrvNoReading(value)
+  )
+}
+
 function isError(value: Fields): boolean {
   return typeof value.code === "string" && typeof value.message === "string" && typeof value.action === "string"
 }
@@ -103,11 +151,12 @@ const CHECKS: Record<ServerMessage["type"], (value: Fields) => boolean> = {
   frame: isFrame,
   pulse: isPulse,
   bpm: isBpm,
+  hrv: isHrv,
   error: isError,
 }
 
 function isMessageType(value: unknown): value is ServerMessage["type"] {
-  return value === "frame" || value === "pulse" || value === "bpm" || value === "error"
+  return typeof value === "string" && Object.hasOwn(CHECKS, value)
 }
 
 function isServerMessage(value: unknown): value is ServerMessage {

@@ -1,4 +1,5 @@
 import json
+import math
 
 import numpy as np
 from numpy.typing import NDArray
@@ -70,19 +71,32 @@ def bpm_message(capture_ms: int, reading: Reading) -> Message:
 def hrv_message(
     capture_ms: int, summary: Summary, no_reading: NoReading | None
 ) -> Message:
+    decision = sendable(no_reading)
     return {
         "type": "hrv",
         "t": capture_ms,
-        "rmssd_ms": rounded(summary.rmssd_ms, HRV_PLACES),
-        "sdnn_ms": rounded(summary.sdnn_ms, HRV_PLACES),
-        "minute_bpm": rounded(summary.bpm, BPM_PLACES),
+        "rmssd_ms": rounded(finite(summary.rmssd_ms), HRV_PLACES),
+        "sdnn_ms": rounded(finite(summary.sdnn_ms), HRV_PLACES),
+        "minute_bpm": rounded(finite(summary.bpm), BPM_PLACES),
         "minute_count": summary.count,
         "bpm_low": None,
         "bpm_high": None,
-        "no_reading": None if no_reading is None else no_reading.code,
-        "why": None if no_reading is None else no_reading.why,
-        "clear_percent": None if no_reading is None else no_reading.clear_percent,
+        "no_reading": None if decision is None else decision.code,
+        "why": None if decision is None else decision.why,
+        "clear_percent": None if decision is None else decision.clear_percent,
     }
+
+
+def sendable(no_reading: NoReading | None) -> NoReading | None:
+    if no_reading is None:
+        return None
+    if no_reading.why == "faint_pulse" and finite(no_reading.clear_percent) is None:
+        return None
+    return no_reading
+
+
+def finite(value: float | None) -> float | None:
+    return value if value is not None and math.isfinite(value) else None
 
 
 def rounded(value: float | None, places: int) -> float | None:

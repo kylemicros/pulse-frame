@@ -232,26 +232,4 @@ test.describe('guided run live readings', () => {
     await expect.poll(() => longestPathCommands(guided.pulseTrace)).toBeLessThan(5);
     await expect(guided.pulseTrace).toBeVisible();
   });
-
-  test('keeps both variation tiles at "Not enough beats yet" with the later update note through the run', async ({
-    page,
-  }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    const guided = guidedPage(page);
-    await startRun(page, backend);
-
-    await pushAndConfirm(page, backend, WARM_UP_READING);
-    await expect(guided.liveReadings.getByText('Beat to beat variation', { exact: true })).toBeVisible();
-    await expect(guided.liveReadings.getByText('Overall rhythm variation', { exact: true })).toBeVisible();
-    await expect(guided.liveReadings.getByText('Not enough beats yet', { exact: true })).toHaveCount(2);
-    await expect(guided.variationLater).toBeVisible();
-
-    await advanceRunUntil(page, backend, guided.countedTimer);
-    await pushAndConfirm(page, backend, COUNTED_READING);
-
-    await expect(guided.liveReadings.getByText('Not enough beats yet', { exact: true })).toHaveCount(2);
-    await expect(guided.variationLater).toBeVisible();
-    await expect(guided.main).not.toContainText(/RMSSD|SDNN|\bms\b/);
-  });
 });
