@@ -4,7 +4,7 @@ export const SOCKET_UNAVAILABLE: AppError = {
   code: "SOCKET_UNAVAILABLE",
   message: "Can't reach the backend at 127.0.0.1:8000. Either it is not running or it turned this page away.",
   action:
-    "Start it from backend/ with uv run python -m pulse_frame.stream. If the backend is already running, open this page at http://127.0.0.1:4173 (or http://127.0.0.1:5173 with pnpm dev). The page keeps knocking on its own.",
+    "Start it from backend/ with uv run python -m pulse_frame.stream. If the backend is already running, open this page at http://127.0.0.1:4173 (or http://127.0.0.1:5173 with pnpm dev). Then press Start again.",
 }
 
 export const MODEL_LOAD_FAILED: AppError = {

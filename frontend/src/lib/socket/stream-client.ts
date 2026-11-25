@@ -1,5 +1,4 @@
 import type { AppError } from "@/lib/errors"
-import { retryDelay } from "@/lib/socket/backoff"
 import { parseServerMessage, type ServerMessage } from "@/lib/socket/messages"
 import { BACKEND_FAILED, MESSAGE_TOO_BIG, MODEL_LOAD_FAILED } from "@/lib/socket/socket-errors"
 
@@ -7,7 +6,7 @@ export const STREAM_URL = "ws://127.0.0.1:8000/ws/stream"
 
 export const FRAME_SPACING_MS = 34
 
-export type LinkStatus = "connecting" | "live" | "busy" | "unreachable"
+export type LinkStatus = "live" | "busy" | "unreachable"
 
 export type StreamClientEvents = {
   onOpen: () => void
@@ -26,10 +25,8 @@ export class StreamClient {
   private readonly url: string
   private readonly events: StreamClientEvents
   private socket: WebSocket | null = null
-  private attempt = 0
   private live = false
   private closed = false
-  private retryTimer: number | undefined = undefined
 
   constructor(url: string, events: StreamClientEvents) {
     this.url = url
@@ -37,17 +34,14 @@ export class StreamClient {
   }
 
   connect(): void {
-    if (this.closed) {
+    if (this.closed || this.socket !== null) {
       return
     }
-    this.retryTimer = undefined
-    this.live = false
-    this.events.onStatus("connecting")
     let socket: WebSocket
     try {
       socket = new WebSocket(this.url)
     } catch {
-      this.retry("unreachable")
+      this.lost("unreachable")
       return
     }
     socket.binaryType = "arraybuffer"
@@ -75,8 +69,6 @@ export class StreamClient {
 
   close(): void {
     this.closed = true
-    globalThis.clearTimeout(this.retryTimer)
-    this.retryTimer = undefined
     const socket = this.socket
     this.socket = null
     if (socket !== null && socket.readyState !== WebSocket.CLOSED) {
@@ -90,7 +82,6 @@ export class StreamClient {
     }
     if (!this.live) {
       this.live = true
-      this.attempt = 0
       this.events.onStatus("live")
     }
     const message = typeof event.data === "string" ? parseServerMessage(event.data) : null
@@ -114,7 +105,7 @@ export class StreamClient {
       this.fail(MESSAGE_TOO_BIG)
       return
     }
-    this.retry(event.code === CLOSE_TRY_AGAIN_LATER ? "busy" : "unreachable")
+    this.lost(event.code === CLOSE_TRY_AGAIN_LATER ? "busy" : "unreachable")
   }
 
   private fail(error: AppError): void {
@@ -122,10 +113,8 @@ export class StreamClient {
     this.events.onFatal(error)
   }
 
-  private retry(status: "busy" | "unreachable"): void {
+  private lost(status: "busy" | "unreachable"): void {
+    this.closed = true
     this.events.onStatus(status)
-    const delay = retryDelay(this.attempt)
-    this.attempt += 1
-    this.retryTimer = globalThis.setTimeout(() => this.connect(), delay)
   }
 }

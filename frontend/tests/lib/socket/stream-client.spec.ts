@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { expectQuietRef, guidedPage, openGuidedRun, startRun } from '../../support/guided-page';
-import { MockBackend, WIRE_ERRORS } from '../../support/mock-backend';
+import { expectQuietRef, guidedPage, openGuidedRun, RUN_MS, startRun } from '../../support/guided-page';
+import { MockBackend, STREAM_URL, WIRE_ERRORS } from '../../support/mock-backend';
 import { settleRendering, waitForMoreFrames } from '../../support/page-helpers';
 import { socketRecords } from '../../support/socket-recorder';
 
@@ -37,6 +37,69 @@ const UNKNOWN_CODE_MESSAGE = "The pulse reader flagged a problem but didn't say 
 
 const BAD_REPLY_MESSAGE =
   "The pulse reader sent something this page can't read, so it was ignored. The numbers may stall.";
+
+const UNREACHABLE_MESSAGE = "Can't reach the pulse reader, so the run stopped.";
+const BUSY_MESSAGE = 'The app is busy in another tab or window, so the run stopped.';
+const CAMERA_OFF_STOPPED = "Camera's off. The run stopped.";
+
+const LINK_LOSSES = [
+  {
+    name: 'drops without a close frame',
+    close: { code: 1006 },
+    code: 'SOCKET_UNAVAILABLE',
+    message: UNREACHABLE_MESSAGE,
+  },
+  { name: 'closes normally', close: { code: 1000 }, code: 'SOCKET_UNAVAILABLE', message: UNREACHABLE_MESSAGE },
+  { name: 'goes away', close: { code: 1001 }, code: 'SOCKET_UNAVAILABLE', message: UNREACHABLE_MESSAGE },
+  {
+    name: 'says another connection is open',
+    close: { code: 1013, reason: 'ANOTHER_CONNECTION_OPEN' },
+    code: 'SOCKET_BUSY',
+    message: BUSY_MESSAGE,
+  },
+];
+
+const START_REFUSALS = [
+  { name: 'is not there', close: { code: 1006 }, code: 'SOCKET_UNAVAILABLE', message: UNREACHABLE_MESSAGE },
+  {
+    name: 'is busy with another connection',
+    close: { code: 1013, reason: 'ANOTHER_CONNECTION_OPEN' },
+    code: 'SOCKET_BUSY',
+    message: BUSY_MESSAGE,
+  },
+];
+
+type RefusedSocketsWindow = Window & { refusedSockets: { count: number } };
+
+async function refuseSocketConstruction(page: Page): Promise<void> {
+  await page.addInitScript((url) => {
+    const refused = { count: 0 };
+    Object.defineProperty(globalThis, 'refusedSockets', { value: refused });
+    const Real = globalThis.WebSocket;
+    globalThis.WebSocket = class RefusingSocket extends Real {
+      constructor(target: string | URL, protocols?: string | string[]) {
+        if (String(target) === url) {
+          refused.count += 1;
+          throw new DOMException('The test refused to open this socket.', 'SecurityError');
+        }
+        super(target, protocols);
+      }
+    };
+  }, STREAM_URL);
+}
+
+function refusedSocketCount(page: Page): Promise<number> {
+  return page.evaluate(() => (globalThis as unknown as RefusedSocketsWindow).refusedSockets.count);
+}
+
+async function expectNoSecondConnection(page: Page, backend: MockBackend): Promise<void> {
+  backend.acceptEveryConnection();
+  await page.clock.runFor(RUN_MS);
+  await settleRendering(page);
+  expect(await socketRecords(page)).toHaveLength(1);
+  expect(backend.connections).toHaveLength(1);
+  expect(backend.openConnections()).toEqual([]);
+}
 
 function gapsBetween(times: number[]): number[] {
   return times.slice(1).map((time, index) => time - times[index]);
@@ -104,6 +167,90 @@ test.describe('stream socket client', () => {
       await expect(guided.main.getByText(terminal.message)).toBeVisible();
     });
   }
+
+  for (const loss of LINK_LOSSES) {
+    test(`stops the run with a quiet Ref: ${loss.code} and never opens a second connection when the link ${loss.name} mid-run`, async ({
+      page,
+    }) => {
+      await page.clock.install();
+      const backend = await MockBackend.attach(page);
+      const guided = guidedPage(page);
+      await startRun(page, backend);
+
+      backend.dropOpenConnections(loss.close);
+
+      await expectQuietRef(guided.main, loss.message, loss.code);
+      await expect(guided.main.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
+      await expect(guided.startAgain).toBeVisible();
+      await expect(guided.stop).toHaveCount(0);
+
+      await expectNoSecondConnection(page, backend);
+      await expectQuietRef(guided.main, loss.message, loss.code);
+      await expect(guided.startAgain).toBeVisible();
+    });
+  }
+
+  for (const refusal of START_REFUSALS) {
+    test(`stops at Start with a quiet Ref: ${refusal.code} and never knocks again when the pulse reader ${refusal.name}`, async ({
+      page,
+    }) => {
+      await page.clock.install();
+      const backend = await MockBackend.attach(page);
+      backend.refuseEveryConnection(refusal.close);
+      const guided = guidedPage(page);
+      await openGuidedRun(page);
+
+      await guided.start.click();
+
+      await expectQuietRef(guided.main, refusal.message, refusal.code);
+      await expect(guided.startAgain).toBeVisible();
+      await expect(guided.stop).toHaveCount(0);
+
+      await expectNoSecondConnection(page, backend);
+      await expectQuietRef(guided.main, refusal.message, refusal.code);
+      expect(backend.frames).toEqual([]);
+    });
+  }
+
+  test('stops with a quiet Ref: SOCKET_UNAVAILABLE and tries no second socket when the browser will not open one', async ({
+    page,
+  }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    await refuseSocketConstruction(page);
+    const guided = guidedPage(page);
+    await openGuidedRun(page);
+
+    await guided.start.click();
+
+    await expectQuietRef(guided.main, UNREACHABLE_MESSAGE, 'SOCKET_UNAVAILABLE');
+    await expect(guided.main.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
+    await expect(guided.startAgain).toBeVisible();
+
+    await page.clock.runFor(RUN_MS);
+    await settleRendering(page);
+    expect(await refusedSocketCount(page)).toBe(1);
+    expect(backend.connections).toEqual([]);
+    await expectQuietRef(guided.main, UNREACHABLE_MESSAGE, 'SOCKET_UNAVAILABLE');
+  });
+
+  test('opens exactly one new connection for Start again after a dropped link, and keeps it', async ({ page }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
+    backend.dropOpenConnections({ code: 1006 });
+    await expect(guided.startAgain).toBeVisible();
+    await page.clock.runFor(30000);
+
+    await guided.startAgain.click();
+
+    await expect.poll(() => backend.openConnections().length).toBe(1);
+    await expect(guided.stop).toBeVisible();
+    await expect(guided.main.getByText('Ref: SOCKET_UNAVAILABLE', { exact: true })).toHaveCount(0);
+    expect(backend.connections).toHaveLength(2);
+    expect(await socketRecords(page)).toHaveLength(2);
+  });
 
   test('shows a quiet Ref: BAD_REPLY for an unreadable reply and keeps streaming on the same connection', async ({
     page,
