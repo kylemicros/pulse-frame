@@ -53,9 +53,6 @@ export function monitorReducer(state: MonitorState, action: MonitorAction): Moni
       if (action.status === "unreachable") {
         return { ...state, ...CLEARED_READINGS, link: "unreachable", error: SOCKET_UNAVAILABLE }
       }
-      if (action.status === "connecting" && (state.link === "unreachable" || state.link === "busy")) {
-        return state
-      }
       return { ...state, link: action.status }
     case "message":
       return applyMessage(clearBadReply(state), action)

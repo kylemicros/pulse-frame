@@ -9,11 +9,11 @@ import {
   START_FAILED,
   stopCamera,
 } from "@/features/capture"
+import { plainError } from "@/features/guided-capture/lib/run-copy"
 import type { SessionEvent } from "@/features/guided-capture/types"
 import type { AppError } from "@/lib/errors"
 import type { ServerMessage } from "@/lib/socket/messages"
 import { FRAME_SPACING_MS, STREAM_URL, StreamClient } from "@/lib/socket/stream-client"
-import { wireErrorText } from "@/lib/socket/wire-errors"
 
 const VIDEO_NOT_READY_RETRY_MS = 50
 
@@ -24,7 +24,6 @@ export class MonitorSession {
   private stream: MediaStream | null = null
   private client: StreamClient | null = null
   private ended = false
-  private connection = 0
   private scheduled = false
   private inFlightT: number | null = null
   private lastSendMs = Number.NEGATIVE_INFINITY
@@ -107,16 +106,12 @@ export class MonitorSession {
   }
 
   private opened(): void {
-    this.connection += 1
-    this.scheduled = false
-    this.inFlightT = null
-    globalThis.clearTimeout(this.pumpTimer)
     this.pump(0)
   }
 
   private receive(message: ServerMessage): void {
     if (message.type === "error") {
-      this.emit({ type: "notice", error: wireErrorText(message) })
+      this.emit({ type: "notice", error: plainError(message) })
       if (this.inFlightT !== null) {
         this.turnDone()
       }
@@ -138,19 +133,14 @@ export class MonitorSession {
       return
     }
     this.scheduled = true
-    const connection = this.connection
     const spacing = this.lastSendMs + FRAME_SPACING_MS - performance.now()
     const wait = Math.max(minimumWaitMs, Math.ceil(spacing), 0)
     globalThis.clearTimeout(this.pumpTimer)
-    this.pumpTimer = globalThis.setTimeout(() => void this.sendFrame(connection), wait)
+    this.pumpTimer = globalThis.setTimeout(() => void this.sendFrame(), wait)
   }
 
-  private isStale(connection: number): boolean {
-    return this.ended || connection !== this.connection
-  }
-
-  private async sendFrame(connection: number): Promise<void> {
-    if (this.isStale(connection)) {
+  private async sendFrame(): Promise<void> {
+    if (this.ended) {
       return
     }
     const captureMs = performance.now()
@@ -163,12 +153,12 @@ export class MonitorSession {
     try {
       frame = await encodeFrame(this.video, this.canvas, captureMs)
     } catch {
-      if (!this.isStale(connection)) {
+      if (!this.ended) {
         this.finish(FRAME_CAPTURE_FAILED)
       }
       return
     }
-    if (this.isStale(connection)) {
+    if (this.ended) {
       return
     }
     this.scheduled = false
