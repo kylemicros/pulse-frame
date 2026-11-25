@@ -15,6 +15,7 @@ import pytest
 from numpy.typing import NDArray
 from psycopg import sql
 
+from pulse_frame.signal import summary as counted
 from pulse_frame.signal.beats import SNR_FLOOR_DB, Interval, IntervalFlag
 from pulse_frame.signal.hrv import (
     READING_FLOOR_DB,
@@ -282,7 +283,7 @@ def assert_floor_holds(url: str, session_id: int, recording: Recording) -> None:
         float(str(row[1]))
         for row in accepted_in_summary_span(url, session_id, recording)
     )
-    assert accepted_ms >= replay.SUMMARY_MIN_ACCEPTED_MS, (
+    assert accepted_ms >= counted.SUMMARY_MIN_ACCEPTED_MS, (
         f"the minute holds {accepted_ms / 1000:.1f} s accepted, under the floor"
     )
 
@@ -311,7 +312,7 @@ def assert_minute_does_not_alternate(
     url: str, session_id: int, recording: Recording
 ) -> None:
     replayed = replay.replay_samples(frame_samples(session_id))
-    span = replay.newest_span(replayed.intervals, replayed.newest_ms)
+    span = counted.newest_span(replayed.intervals, replayed.newest_ms)
     assert as_rows(span) == minute_rows(url, session_id, recording), (
         "the rebuilt minute differs from the stored minute"
     )
@@ -362,7 +363,7 @@ def test_flag_codes_cover_every_tracker_flag_with_ok_as_zero() -> None:
 
 
 def test_the_stored_time_hole_threshold_is_one_hundred_ms() -> None:
-    assert replay.SAMPLE_HOLE_MS == SAMPLE_HOLE_MS
+    assert counted.SAMPLE_HOLE_MS == SAMPLE_HOLE_MS
 
 
 @pytest.mark.parametrize("frame_writer", FRAME_WRITERS)
@@ -533,10 +534,10 @@ def test_a_minute_over_the_rejected_share_prints_no_bpm_rmssd_or_sdnn() -> None:
     after = chain(respiring_ibis(SHARE_TAIL_COUNT, TRUE_IBI_MS), rejected[-1].end_ms)
     intervals = [*before, *rejected, *after]
     newest_ms = round(after[-1].end_ms + SHARE_NEWEST_AFTER_MS)
-    span = replay.newest_span(intervals, newest_ms)
+    span = counted.newest_span(intervals, newest_ms)
     accepted_ms = sum(i.ibi_ms for i in span if i.accepted)
     assert len(span) == len(intervals)
-    assert accepted_ms >= replay.SUMMARY_MIN_ACCEPTED_MS
+    assert accepted_ms >= counted.SUMMARY_MIN_ACCEPTED_MS
     assert SHARE_REJECTED_COUNT / len(span) > MAX_REJECTED_SHARE
     assert newest_ms - after[-1].end_ms <= STALE_MS
     assert not alternates(span)
@@ -720,7 +721,7 @@ def test_hrv_rows_sit_on_the_tracker_update_times_at_least_one_update_apart(
 def test_the_summary_floor_is_forty_five_seconds_of_accepted_ibi_in_the_minute() -> (
     None
 ):
-    assert replay.SUMMARY_MIN_ACCEPTED_MS == SUMMARY_MIN_ACCEPTED_MS
+    assert counted.SUMMARY_MIN_ACCEPTED_MS == SUMMARY_MIN_ACCEPTED_MS
 
 
 def test_a_minute_below_the_accepted_floor_prints_no_bpm_rmssd_or_sdnn(
@@ -1166,8 +1167,8 @@ def checked_result(checks: list[WindowCheck]) -> replay.ReplayResult:
     )
 
 
-def weak_minute_summary(count: int) -> replay.Summary:
-    return replay.Summary(
+def weak_minute_summary(count: int) -> counted.Summary:
+    return counted.Summary(
         bpm=None, rmssd_ms=None, sdnn_ms=None, count=count, accepted_percent=None
     )
 
@@ -1180,12 +1181,12 @@ def test_older_weak_windows_before_a_strong_newest_minute_give_no_notice() -> No
             *checks_over(newest_from_ms, CHECK_SESSION_MS + 1.0, STRONG_DB),
         ]
     )
-    assert replay.is_too_weak(result.window_checks)
+    assert counted.is_too_weak(result.window_checks)
 
     newest = replay.newest_checks(result)
 
     assert newest
-    assert not replay.is_too_weak(newest)
+    assert not counted.is_too_weak(newest)
     assert replay.weak_notice(result, weak_minute_summary(0)) is None
 
 
@@ -1203,7 +1204,7 @@ def test_the_notice_needs_more_than_half_the_newest_windows_under_the_floor(
         for index in range(BOUNDARY_CHECKS)
     ]
 
-    weak = replay.is_too_weak(checks)
+    weak = counted.is_too_weak(checks)
 
     assert weak is too_weak
 
@@ -1212,7 +1213,7 @@ def test_a_weak_minute_with_some_accepted_beats_gives_no_notice() -> None:
     result = checked_result(
         checks_over(CHECK_SESSION_MS - SUMMARY_SPAN_MS, CHECK_SESSION_MS + 1.0, WEAK_DB)
     )
-    assert replay.is_too_weak(replay.newest_checks(result))
+    assert counted.is_too_weak(replay.newest_checks(result))
 
     with_beats = replay.weak_notice(result, weak_minute_summary(ACCEPTED_IN_MINUTE))
     without_beats = replay.weak_notice(result, weak_minute_summary(0))
@@ -1284,7 +1285,7 @@ def test_windows_too_short_to_measure_are_never_counted_under_the_floor() -> Non
     ]
     result = checked_result(unmeasured)
 
-    weak = replay.is_too_weak(replay.newest_checks(result))
+    weak = counted.is_too_weak(replay.newest_checks(result))
     notice = replay.weak_notice(result, weak_minute_summary(0))
 
     assert not weak

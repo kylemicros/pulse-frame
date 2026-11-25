@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from pulse_frame.monitor.processor import FrameProcessor, FrameResult
 from pulse_frame.signal.errors import SignalError
+from pulse_frame.signal.live import LiveHrv
 from pulse_frame.signal.tracker import ReadingState
 from pulse_frame.stream.admission import FrameAdmission
 from pulse_frame.stream.errors import FrameRejectedError, WireCode, is_wire_code
@@ -27,6 +28,7 @@ from pulse_frame.stream.replies import (
     encoded,
     error_message,
     frame_message,
+    hrv_message,
     pulse_message,
 )
 from pulse_frame.vision.errors import VisionError
@@ -59,6 +61,7 @@ TELEMETRY_OFF: TelemetryConfig = {
 }
 
 type ProcessorFactory = Callable[[], FrameProcessor]
+type HrvFactory = Callable[[], LiveHrv]
 type Clock = Callable[[], float]
 
 
@@ -84,17 +87,26 @@ class ConnectionSlot:
 class Processed:
     result: FrameResult
     waveform: list[tuple[float, float]] | None
+    hrv: Message | None = None
 
 
 def process_frame(
     processor: FrameProcessor,
+    live: LiveHrv,
     jpeg: bytes,
     timestamp_ms: int,
     reading_due: bool,
 ) -> Processed:
     rgb = jpeg_rgb(jpeg)
     result = processor.process(rgb, timestamp_ms)
-    return Processed(result, processor.waveform() if reading_due else None)
+    live.add(timestamp_ms, result.colours, moving=result.moving)
+    if not reading_due:
+        return Processed(result, None)
+    return Processed(
+        result,
+        processor.waveform(),
+        hrv_message(timestamp_ms, live.summary(), live.no_reading()),
+    )
 
 
 def wire_code(error: VisionError | SignalError) -> WireCode:
@@ -104,10 +116,15 @@ def wire_code(error: VisionError | SignalError) -> WireCode:
 
 class StreamSession:
     def __init__(
-        self, websocket: WebSocket, processor: FrameProcessor, clock: Clock
+        self,
+        websocket: WebSocket,
+        processor: FrameProcessor,
+        live: LiveHrv,
+        clock: Clock,
     ) -> None:
         self._socket = websocket
         self._processor = processor
+        self._live = live
         self._clock = clock
         self._admission = FrameAdmission()
         self._last_reading_ms: int | None = None
@@ -146,6 +163,7 @@ class StreamSession:
             processed = await anyio.to_thread.run_sync(
                 process_frame,
                 self._processor,
+                self._live,
                 jpeg_of(data),
                 timestamp_ms,
                 reading_due,
@@ -197,7 +215,10 @@ async def close_processor(processor: FrameProcessor) -> None:
 
 
 async def serve_connection(
-    websocket: WebSocket, factory: ProcessorFactory, clock: Clock
+    websocket: WebSocket,
+    factory: ProcessorFactory,
+    hrv_factory: HrvFactory,
+    clock: Clock,
 ) -> None:
     try:
         processor = await build_processor(factory)
@@ -207,7 +228,7 @@ async def serve_connection(
         return
     log.info("event=connection_opened")
     try:
-        await StreamSession(websocket, processor, clock).run()
+        await StreamSession(websocket, processor, hrv_factory(), clock).run()
     except WebSocketDisconnect:
         log.info("event=client_gone")
     finally:
@@ -218,6 +239,7 @@ async def serve_connection(
 def create_app(
     processor_factory: ProcessorFactory | None = None,
     clock: Clock = time.monotonic,
+    hrv_factory: HrvFactory = LiveHrv,
 ) -> FastAPI:
     factory = default_processor if processor_factory is None else processor_factory
     slot = ConnectionSlot()
@@ -241,7 +263,7 @@ def create_app(
             return
         try:
             await websocket.accept()
-            await serve_connection(websocket, factory, clock)
+            await serve_connection(websocket, factory, hrv_factory, clock)
         finally:
             slot.release()
 

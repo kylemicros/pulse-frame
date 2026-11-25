@@ -3,6 +3,7 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
+from pulse_frame.signal import summary as counted
 from pulse_frame.signal.beats import Interval, IntervalFlag
 from pulse_frame.signal.hrv import (
     MIN_ACCEPTED_MS,
@@ -50,10 +51,10 @@ THIN_MINUTE = 2
 LOUD_SWING_MS = 80.0
 SPARSE_EVERY = 3
 PRINTED_SESSION = 7
-PRINTED = replay.Summary(
+PRINTED = counted.Summary(
     bpm=72.0, rmssd_ms=34.5, sdnn_ms=41.5, count=70, accepted_percent=96.5
 )
-BLANK = replay.Summary(
+BLANK = counted.Summary(
     bpm=None, rmssd_ms=None, sdnn_ms=None, count=3, accepted_percent=None
 )
 
@@ -138,7 +139,7 @@ def assert_clear_of_minute_edges(intervals: list[Interval], newest_ms: int) -> N
         assert into_minute_ms < SUMMARY_SPAN_MS - MINUTE_EDGE_CLEARANCE_MS
 
 
-def assert_window_values(summary: replay.Summary, intervals: list[Interval]) -> None:
+def assert_window_values(summary: counted.Summary, intervals: list[Interval]) -> None:
     newest_ms = newest_after(intervals)
     window = [i.ibi_ms for i in in_hrv_window(intervals, newest_ms)]
     assert_clear_of_minute_edges(intervals, newest_ms)
@@ -273,7 +274,7 @@ def test_the_mean_of_minute_sdnns_is_none_without_a_minute_of_forty_five_s_accep
         else None
     )
 
-    sdnn = replay.mean_sdnn(replay.minute_sdnns(intervals, newest_ms))
+    sdnn = counted.mean_sdnn(counted.minute_sdnns(intervals, newest_ms))
 
     assert (sdnn is not None) is has_sdnn
     assert sdnn == expected
@@ -457,6 +458,6 @@ def test_a_minute_that_fails_its_gates_blanks_all_three_even_if_the_window_passe
     ids=["values", "blank"],
 )
 def test_the_summary_line_puts_bpm_and_count_on_the_minute_and_hrv_on_five_minutes(
-    values: replay.Summary, line: str
+    values: counted.Summary, line: str
 ) -> None:
     assert replay.summary_line(PRINTED_SESSION, values) == line

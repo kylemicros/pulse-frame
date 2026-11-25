@@ -4,6 +4,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from pulse_frame.monitor.processor import FrameResult, Patch
+from pulse_frame.signal.summary import NoReading, Summary
 from pulse_frame.signal.tracker import Reading
 from pulse_frame.stream.errors import WIRE_ERRORS, WireCode
 
@@ -14,6 +15,7 @@ PULSE_TIME_PLACES = 1
 PULSE_VALUE_PLACES = 4
 BPM_PLACES = 1
 QUALITY_PLACES = 2
+HRV_PLACES = 1
 
 
 def encoded(message: Message) -> str:
@@ -62,6 +64,24 @@ def bpm_message(capture_ms: int, reading: Reading) -> Message:
         "bpm": rounded(reading.bpm, BPM_PLACES) if reading.state == "ok" else None,
         "quality_db": rounded(reading.quality_db, QUALITY_PLACES),
         "state": reading.state,
+    }
+
+
+def hrv_message(
+    capture_ms: int, summary: Summary, no_reading: NoReading | None
+) -> Message:
+    return {
+        "type": "hrv",
+        "t": capture_ms,
+        "rmssd_ms": rounded(summary.rmssd_ms, HRV_PLACES),
+        "sdnn_ms": rounded(summary.sdnn_ms, HRV_PLACES),
+        "minute_bpm": rounded(summary.bpm, BPM_PLACES),
+        "minute_count": summary.count,
+        "bpm_low": None,
+        "bpm_high": None,
+        "no_reading": None if no_reading is None else no_reading.code,
+        "why": None if no_reading is None else no_reading.why,
+        "clear_percent": None if no_reading is None else no_reading.clear_percent,
     }
 
 
