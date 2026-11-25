@@ -1,17 +1,16 @@
 import math
 import re
 
-import numpy as np
 import pytest
 
 from pulse_frame.signal.hrv import READING_FLOOR_DB, HrvTracker, WindowCheck
+from pulse_frame.signal.summary import Summary
 from pulse_frame.store.recording import HrvRow, frame_samples
 from pulse_frame.tools import replay
 from pulse_frame.tools.sessions import SANDBOX_UNSUPPORTED_ACTION
+from tests.counted_runs import NEAR_FLOOR_SD, TOO_WEAK_SD, UNDER_FLOOR_SD, noisy
 from tests.database import WALL_NS, insert_recording, rows_under
-from tests.frames import SEED, TRUE_BPM
 from tests.platform.support import after_sandbox_notice
-from tests.signal.beat_synthetic import beat_recording
 from tests.signal.synthetic import Recording
 from tests.tools.replay_support import (
     COUNTED_SUMMARY_LINE,
@@ -39,12 +38,8 @@ WEAK_CODE = "SIGNAL_TOO_WEAK"
 NO_COUNTED_CODE = "NO_COUNTED_SAMPLES"
 WARM_UP_S = 60.0
 COUNTED_S = 90.0
-NOISE_SEED = SEED + 7
-NEAR_FLOOR_SD = 0.185
-UNDER_FLOOR_SD = 0.3
 CLEAN_SD = 0.1
 JUST_CLEARING_SD = 0.17
-TOO_WEAK_SD = 0.5
 SUMMARY_SPAN_MS = 60_000.0
 COUNTED_LABEL = "counted 90 seconds"
 WEAK_ACTION = (
@@ -75,13 +70,6 @@ HAND_ROW = HrvRow(
 HAND_RMSSD_MS = 40.0
 
 
-def noisy_recording(noise_sd: float, duration_s: float) -> Recording:
-    recording, _ = beat_recording(TRUE_BPM, SEED, duration_s)
-    rng = np.random.default_rng(NOISE_SEED)
-    noise = rng.normal(0.0, noise_sd, recording.regions.shape)
-    return Recording(recording.timestamps_ms, recording.regions + noise)
-
-
 def stored_session(
     url: str,
     recording: Recording,
@@ -101,7 +89,7 @@ def warmed_up(url: str, recording: Recording, moving: bool = False) -> tuple[int
 
 
 def warmed_up_session(url: str, noise_sd: float) -> tuple[int, int]:
-    return warmed_up(url, noisy_recording(noise_sd, WARM_UP_S + COUNTED_S))
+    return warmed_up(url, noisy(noise_sd, WARM_UP_S + COUNTED_S))
 
 
 def face_lost_session(url: str) -> tuple[int, int]:
@@ -110,7 +98,7 @@ def face_lost_session(url: str) -> tuple[int, int]:
 
 
 def no_warm_up_session(url: str, noise_sd: float, counted: str) -> int:
-    recording = noisy_recording(noise_sd, WARM_UP_S + COUNTED_S)
+    recording = noisy(noise_sd, WARM_UP_S + COUNTED_S)
     anchor = anchor_ns(recording)
     counted_ns = {"column_default": None, "zero": 0, "anchor": anchor}[counted]
     session_id, _ = stored_session(url, recording, counted_ns)
@@ -158,8 +146,8 @@ def hand_result(
     )
 
 
-def hand_summary(rmssd_ms: float | None = None) -> replay.Summary:
-    return replay.Summary(
+def hand_summary(rmssd_ms: float | None = None) -> Summary:
+    return Summary(
         bpm=None, rmssd_ms=rmssd_ms, sdnn_ms=None, count=0, accepted_percent=None
     )
 
@@ -334,7 +322,7 @@ def test_a_face_that_keeps_leaving_the_view_gives_the_face_loss_line(
 def test_a_counted_part_that_clears_but_moves_throughout_gives_no_notice(
     store_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    recording = noisy_recording(CLEAN_SD, WARM_UP_S + COUNTED_S)
+    recording = noisy(CLEAN_SD, WARM_UP_S + COUNTED_S)
     session_id, counted_ms = warmed_up(store_url, recording, moving=True)
     checks = counted_checks(session_id, counted_ms)
     assert median_snr_db(checks) >= READING_FLOOR_DB, "the counted part never clears"
@@ -351,7 +339,7 @@ def test_a_counted_part_that_clears_but_moves_throughout_gives_no_notice(
 def test_a_session_with_no_counted_samples_gives_only_the_no_counted_samples_line(
     store_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    recording = noisy_recording(NEAR_FLOOR_SD, WARM_UP_S + COUNTED_S)
+    recording = noisy(NEAR_FLOOR_SD, WARM_UP_S + COUNTED_S)
     counted_ns = anchor_ns(recording) + round(LATE_COUNTED_S * NS_PER_S)
     session_id, _ = stored_session(store_url, recording, counted_ns)
 

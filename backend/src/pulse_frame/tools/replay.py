@@ -1,12 +1,10 @@
 import argparse
 import math
 import sys
-from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
-from numpy.typing import NDArray
 
 from pulse_frame.platform.errors import SandboxError
 from pulse_frame.platform.sandbox import apply_loopback_sandbox
@@ -17,20 +15,19 @@ from pulse_frame.signal.beats import (
     IntervalFlag,
 )
 from pulse_frame.signal.errors import SignalError
-from pulse_frame.signal.hrv import (
-    READING_FLOOR_DB,
-    WINDOW_MS,
-    HrvReading,
-    HrvTracker,
-    WindowCheck,
-    alternates,
-    checks_between,
-    clears_reading_floor,
-    hrv_reading,
-    is_stale,
-    newest_window,
-    too_many_rejected,
+from pulse_frame.signal.hrv import WINDOW_MS, HrvReading, HrvTracker, WindowCheck
+from pulse_frame.signal.summary import (
+    Summary,
+    beside_holes,
+    counted_checks,
+    counted_intervals,
+    counted_reading,
+    floor_decision,
+    measured_under_floor,
+    newest_minute_checks,
+    too_weak_decision,
 )
+from pulse_frame.signal.summary import summarise as summarise_counted
 from pulse_frame.signal.tracker import UPDATE_INTERVAL_MS, RegionColours
 from pulse_frame.store.errors import StoreError
 from pulse_frame.store.recording import (
@@ -61,18 +58,13 @@ FLAG_CODES: dict[IntervalFlag, int] = {
     "out_of_range": 5,
     "off_median": 6,
 }
-SAMPLE_HOLE_MS = 100.0
-SUMMARY_SPAN_MS = 60_000.0
 MS_PER_S = 1_000.0
 SECONDS_PER_MINUTE = 60
 NEWEST_MINUTE = 0
-SUMMARY_MIN_ACCEPTED_MS = 45_000.0
-MIN_MINUTE_INTERVALS = 2
 HRV_WINDOW_LABEL = f"last {round(WINDOW_MS / 60_000.0)} minutes"
 WHOLE_SESSION_LABEL = "whole session"
 COUNTED_PART_LABEL = "counted part"
 UNSET = "-"
-WEAK_WINDOW_SHARE = 0.5
 WEAK_SIGNAL_ACTION = (
     "Light the face evenly and brightly, for example facing a window or a lamp,"
     " keep still, and turn off the camera's auto exposure if it has that"
@@ -100,16 +92,6 @@ class ReplayResult:
     readings: list[HrvRow]
     newest_ms: int
     window_checks: list[WindowCheck]
-
-
-@dataclass(frozen=True)
-class Summary:
-    bpm: float | None
-    rmssd_ms: float | None
-    sdnn_ms: float | None
-    count: int
-    accepted_percent: float | None
-    sdnn_minutes: tuple[int, ...] = ()
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -225,25 +207,13 @@ def half_up(value: float) -> int:
 
 
 def weak_notice(result: ReplayResult, summary: Summary) -> str | None:
-    checks = newest_checks(result)
-    if summary.count > 0 or not is_too_weak(checks):
+    if too_weak_decision(summary, result.window_checks, result.newest_ms) is None:
         return None
-    return weak_signal_message(checks)
+    return weak_signal_message(newest_checks(result))
 
 
 def newest_checks(result: ReplayResult) -> list[WindowCheck]:
-    return checks_between(
-        result.window_checks, result.newest_ms - SUMMARY_SPAN_MS, result.newest_ms
-    )
-
-
-def measured_under_floor(checks: Sequence[WindowCheck]) -> int:
-    return sum(1 for check in checks if check.measured and check.under_floor)
-
-
-def is_too_weak(checks: Sequence[WindowCheck]) -> bool:
-    under = measured_under_floor(checks)
-    return bool(checks) and under > WEAK_WINDOW_SHARE * len(checks)
+    return newest_minute_checks(result.window_checks, result.newest_ms)
 
 
 def weak_signal_message(checks: Sequence[WindowCheck]) -> str:
@@ -266,38 +236,20 @@ def weak_signal_message(checks: Sequence[WindowCheck]) -> str:
 
 
 def no_reading_notice(result: ReplayResult, summary: Summary) -> str | None:
-    checks = result.window_checks
-    if (
-        result.readings
-        or summary.rmssd_ms is not None
-        or not checks
-        or clears_reading_floor(checks)
-    ):
+    decision = floor_decision(summary, result.window_checks, bool(result.readings))
+    if decision is None:
         return None
-    if face_left_view(checks):
-        return no_reading_line(FACE_LOSS_REASON, FACE_LOSS_ACTION)
-    return no_reading_line(faint_pulse_reason(checks), FAINT_PULSE_ACTION)
+    if decision.why == "faint_pulse" and decision.clear_percent is not None:
+        return no_reading_line(
+            faint_pulse_reason(decision.clear_percent), FAINT_PULSE_ACTION
+        )
+    return no_reading_line(FACE_LOSS_REASON, FACE_LOSS_ACTION)
 
 
-def is_unmeasured(check: WindowCheck) -> bool:
-    return math.isnan(check.snr_db) or check.snr_db == -math.inf
-
-
-def is_measured_under_reading_floor(check: WindowCheck) -> bool:
-    return check.measured and check.snr_db < READING_FLOOR_DB
-
-
-def face_left_view(checks: Sequence[WindowCheck]) -> bool:
-    unmeasured = sum(1 for check in checks if is_unmeasured(check))
-    under = sum(1 for check in checks if is_measured_under_reading_floor(check))
-    return unmeasured > under
-
-
-def faint_pulse_reason(checks: Sequence[WindowCheck]) -> str:
-    clear = sum(1 for check in checks if check.snr_db >= READING_FLOOR_DB)
-    if clear == 0:
+def faint_pulse_reason(clear_percent: float) -> str:
+    if clear_percent == 0.0:
         return "your pulse never showed clearly during the run."
-    share = half_up(100.0 * clear / len(checks))
+    share = half_up(clear_percent)
     shown_share = "under 1%" if share == 0 else f"only {share}%"
     return f"your pulse showed clearly in {shown_share} of the run."
 
@@ -317,21 +269,13 @@ def region_colours(sample: FrameSample) -> RegionColours:
     )
 
 
-def beside_holes(samples: Sequence[FrameSample]) -> NDArray[np.bool_]:
-    times = np.array([sample.t_ms for sample in samples], dtype=np.float64)
-    holes = np.diff(times) > SAMPLE_HOLE_MS
-    low = np.zeros(times.size, dtype=np.bool_)
-    low[:-1] |= holes
-    low[1:] |= holes
-    return low
-
-
 def replay_samples(samples: Sequence[FrameSample], counted_ms: int = 0) -> ReplayResult:
     tracker = HrvTracker()
     settled: dict[float, Interval] = {}
     readings: list[HrvRow] = []
     next_update_ms: float | None = None
-    for sample, low_quality in zip(samples, beside_holes(samples), strict=True):
+    holes = beside_holes([sample.t_ms for sample in samples])
+    for sample, low_quality in zip(samples, holes, strict=True):
         tracker.add(
             sample.t_ms,
             region_colours(sample),
@@ -356,22 +300,6 @@ def replay_samples(samples: Sequence[FrameSample], counted_ms: int = 0) -> Repla
         readings=readings,
         newest_ms=samples[-1].t_ms,
         window_checks=counted_checks(tracker.window_checks(), counted_ms),
-    )
-
-
-def counted_intervals(intervals: Sequence[Interval], counted_ms: int) -> list[Interval]:
-    return [i for i in intervals if i.start_ms >= counted_ms]
-
-
-def counted_checks(checks: Sequence[WindowCheck], counted_ms: int) -> list[WindowCheck]:
-    return [check for check in checks if check.t_ms >= counted_ms]
-
-
-def counted_reading(tracker: HrvTracker, t_ms: int, counted_ms: int) -> HrvReading:
-    return hrv_reading(
-        counted_intervals(tracker.intervals(), counted_ms),
-        t_ms,
-        tracker.window_checks(),
     )
 
 
@@ -409,70 +337,8 @@ def interval_row(interval: Interval) -> IntervalRow:
     )
 
 
-def newest_span(intervals: Sequence[Interval], newest_ms: int) -> list[Interval]:
-    oldest_ms = newest_ms - SUMMARY_SPAN_MS
-    return [i for i in intervals if oldest_ms <= round(i.end_ms) <= newest_ms]
-
-
 def summarise(result: ReplayResult) -> Summary:
-    span = newest_span(result.intervals, result.newest_ms)
-    accepted = np.array([i.ibi_ms for i in span if i.accepted], dtype=np.float64)
-    if accepted.sum() < SUMMARY_MIN_ACCEPTED_MS or not passes_gates(
-        span, int(accepted.size), result.newest_ms
-    ):
-        return Summary(
-            bpm=None,
-            rmssd_ms=None,
-            sdnn_ms=None,
-            count=int(accepted.size),
-            accepted_percent=accepted_percent(result.intervals),
-        )
-    reading = hrv_reading(result.intervals, result.newest_ms, result.window_checks)
-    sdnns = (
-        {}
-        if reading.sdnn_ms is None
-        else minute_sdnns(result.intervals, result.newest_ms)
-    )
-    return Summary(
-        bpm=float(60_000.0 / accepted.mean()),
-        rmssd_ms=reading.rmssd_ms,
-        sdnn_ms=mean_sdnn(sdnns),
-        count=int(accepted.size),
-        accepted_percent=accepted_percent(result.intervals),
-        sdnn_minutes=tuple(sorted(sdnns)),
-    )
-
-
-def mean_sdnn(sdnns: dict[int, float]) -> float | None:
-    return float(np.mean(list(sdnns.values()))) if sdnns else None
-
-
-def minute_sdnns(intervals: Sequence[Interval], newest_ms: int) -> dict[int, float]:
-    minutes: defaultdict[int, list[float]] = defaultdict(list)
-    for interval in newest_window(intervals, newest_ms):
-        if interval.accepted:
-            minute = int((newest_ms - interval.end_ms) // SUMMARY_SPAN_MS)
-            minutes[minute].append(interval.ibi_ms)
-    return {
-        minute: float(np.std(ibis, ddof=1))
-        for minute, ibis in minutes.items()
-        if len(ibis) >= MIN_MINUTE_INTERVALS and sum(ibis) >= SUMMARY_MIN_ACCEPTED_MS
-    }
-
-
-def passes_gates(span: Sequence[Interval], accepted_count: int, newest_ms: int) -> bool:
-    return not (
-        alternates(span)
-        or too_many_rejected(span, accepted_count)
-        or is_stale(span, newest_ms)
-    )
-
-
-def accepted_percent(intervals: Sequence[Interval]) -> float | None:
-    settled = sum(1 for i in intervals if i.flag != "edge")
-    if settled == 0:
-        return None
-    return 100.0 * sum(1 for i in intervals if i.accepted) / settled
+    return summarise_counted(result.intervals, result.newest_ms, result.window_checks)
 
 
 def shown(value: float | None, unit: str = "") -> str:

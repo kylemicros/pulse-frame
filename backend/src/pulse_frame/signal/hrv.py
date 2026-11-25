@@ -9,10 +9,13 @@ from numpy.typing import NDArray
 from scipy import stats
 
 from pulse_frame.signal.beats import (
+    REJECTION_ORDER,
     SNR_FLOOR_DB,
     Interval,
+    IntervalFlag,
     cross_region_snr_db,
     label_intervals,
+    near_flagged_sample,
     rate_band,
     rate_guided_beats,
 )
@@ -64,6 +67,9 @@ FALLBACK_HIGH_HZ = 3.5
 HALF_RATE_SHARE = 0.2
 PLAUSIBLE_PERIOD_SHARES = (0.6, 1.4)
 READING_FLOOR_DB = 3.0
+OUTRANKED_BY_LOW_QUALITY: frozenset[IntervalFlag] = frozenset(
+    ("ok", *REJECTION_ORDER[REJECTION_ORDER.index("low_quality") + 1 :])
+)
 
 
 @dataclass(frozen=True)
@@ -282,6 +288,13 @@ class HrvTracker:
             self._next_update_ms = timestamp_ms + UPDATE_INTERVAL_MS
             self._update()
 
+    def mark_newest_low_quality(self) -> None:
+        if not self._low:
+            return
+        self._low[-1] = True
+        newest_ms = self._times[-1]
+        self._pending = low_quality_near(self._pending, newest_ms)
+
     def intervals(self) -> list[Interval]:
         return [*self._committed, *self._pending]
 
@@ -342,6 +355,22 @@ class HrvTracker:
                 self._beats.append(interval.start_ms)
             self._beats.append(interval.end_ms)
             self._committed.append(interval)
+
+
+def low_quality_near(intervals: list[Interval], sample_ms: float) -> list[Interval]:
+    if not intervals:
+        return []
+    near = near_flagged_sample(
+        np.array([i.start_ms for i in intervals]),
+        np.array([i.end_ms for i in intervals]),
+        np.array([sample_ms]),
+    )
+    return [
+        replace(i, flag="low_quality")
+        if hit and i.flag in OUTRANKED_BY_LOW_QUALITY
+        else i
+        for i, hit in zip(intervals, near.tolist(), strict=True)
+    ]
 
 
 def segment_beats(
