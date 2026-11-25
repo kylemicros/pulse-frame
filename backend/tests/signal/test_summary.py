@@ -160,6 +160,8 @@ def test_the_summary_floor_is_forty_five_seconds_of_accepted_beats() -> None:
         sdnn_ms=None,
         count=FLOOR_BEATS,
         accepted_percent=100.0,
+        bpm_low=60.0,
+        bpm_high=60.0,
     )
     assert under == summary.Summary(
         bpm=None,

@@ -15,6 +15,10 @@ const VALID_MESSAGES: Array<{ name: string; fields: Hrv }> = [
     name: 'with both variation values, a minute heart rate and a range',
     fields: hrv({ rmssd_ms: 41.2, sdnn_ms: 46.5, minute_bpm: 91.3, minute_count: 72, bpm_low: 89.6, bpm_high: 93.1 }),
   },
+  {
+    name: 'with a range whose two ends are equal',
+    fields: hrv({ minute_bpm: 68, minute_count: 72, bpm_low: 68, bpm_high: 68 }),
+  },
   { name: 'saying the signal is too weak', fields: hrv({ no_reading: 'SIGNAL_TOO_WEAK', minute_count: 0 }) },
   {
     name: 'saying the face kept leaving the view',
@@ -27,6 +31,8 @@ const VALID_MESSAGES: Array<{ name: string; fields: Hrv }> = [
 ];
 
 const BASE = { type: 'hrv', t: 4000, ...hrv() };
+const READING = { ...BASE, minute_bpm: 68.4, minute_count: 72 };
+const RANGED = { ...READING, bpm_low: 66.6, bpm_high: 69.2 };
 const FAINT = { ...BASE, no_reading: 'READING_FLOOR_NOT_CLEARED', why: 'faint_pulse', clear_percent: 18.4 };
 
 function withRaw(fields: Record<string, unknown>, key: string, raw: string): string {
@@ -49,6 +55,25 @@ const INVALID_MESSAGES: Array<{ name: string; text: string }> = [
   { name: 'a minute count that is not a whole number', text: JSON.stringify({ ...BASE, minute_count: 61.5 }) },
   { name: 'a minute count of null', text: JSON.stringify({ ...BASE, minute_count: null }) },
   { name: 'a range end given as text', text: JSON.stringify({ ...BASE, bpm_low: '66' }) },
+  { name: 'a low range end without a high end', text: JSON.stringify({ ...RANGED, bpm_high: null }) },
+  { name: 'a high range end without a low end', text: JSON.stringify({ ...RANGED, bpm_low: null }) },
+  { name: 'a low range end above the high end', text: JSON.stringify({ ...RANGED, bpm_low: 69.3 }) },
+  { name: 'a minute heart rate below the low range end', text: JSON.stringify({ ...RANGED, minute_bpm: 66.5 }) },
+  { name: 'a minute heart rate above the high range end', text: JSON.stringify({ ...RANGED, minute_bpm: 69.3 }) },
+  { name: 'a high range end that overflows to infinity', text: withRaw(RANGED, 'bpm_high', '1e999') },
+  { name: 'no low range end field at all', text: without(READING, 'bpm_low') },
+  {
+    name: 'a range with no minute heart rate',
+    text: JSON.stringify({ ...RANGED, minute_bpm: null }),
+  },
+  {
+    name: 'a range on a too weak code',
+    text: JSON.stringify({ ...RANGED, minute_bpm: null, no_reading: 'SIGNAL_TOO_WEAK' }),
+  },
+  {
+    name: 'a range on a reading floor code',
+    text: JSON.stringify({ ...FAINT, minute_count: 9, bpm_low: 66.6, bpm_high: 69.2 }),
+  },
   { name: 'an unknown no reading code', text: JSON.stringify({ ...BASE, no_reading: 'SIGNAL_GONE' }) },
   { name: 'a no reading code in the wrong case', text: JSON.stringify({ ...BASE, no_reading: 'signal_too_weak' }) },
   {

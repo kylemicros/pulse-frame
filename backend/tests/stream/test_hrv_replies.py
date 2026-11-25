@@ -43,6 +43,8 @@ MINUTE_BPM = 72.04
 RMSSD_MS = 41.62
 SDNN_MS = 34.68
 MINUTE_COUNT = 68
+RANGE_LOW = 70.04
+RANGE_HIGH = 74.06
 TINY_SHARE = 100.0 / 2_501
 TINY_SPAN_SHARE = 100.0 / 36_001
 UNDER_HALF_SHARE = 100.0 * 49 / 1_999
@@ -91,10 +93,14 @@ def assert_contract(message: Message) -> Message:
     assert not isinstance(message["t"], bool)
     assert isinstance(message["minute_count"], int)
     assert not isinstance(message["minute_count"], bool)
-    for name in ("rmssd_ms", "sdnn_ms", "minute_bpm"):
+    for name in ("rmssd_ms", "sdnn_ms", "minute_bpm", "bpm_low", "bpm_high"):
         assert message[name] is None or has_places(message[name], 1), message
-    assert message["bpm_low"] is None
-    assert message["bpm_high"] is None
+    low, high, bpm = message["bpm_low"], message["bpm_high"], message["minute_bpm"]
+    if low is None or high is None:
+        assert low is None and high is None, message
+    else:
+        assert bpm is not None, message
+        assert low <= bpm <= high, message
     assert message["no_reading"] in {None, *NO_READING_CODES}
     assert message["why"] in {None, *WHY_CODES}
     texts = {value for value in message.values() if isinstance(value, str)}
@@ -197,6 +203,8 @@ def test_a_minute_bpm_without_variation_sends_no_no_reading_decision() -> None:
     )
 
     assert result.bpm is not None
+    assert result.bpm_low is not None
+    assert result.bpm_high is not None
     assert message == {
         "type": "hrv",
         "t": CAPTURE_MS,
@@ -204,8 +212,8 @@ def test_a_minute_bpm_without_variation_sends_no_no_reading_decision() -> None:
         "sdnn_ms": None,
         "minute_bpm": round(result.bpm, 1),
         "minute_count": result.count,
-        "bpm_low": None,
-        "bpm_high": None,
+        "bpm_low": round(result.bpm_low, 1),
+        "bpm_high": round(result.bpm_high, 1),
         "no_reading": None,
         "why": None,
         "clear_percent": None,
@@ -254,3 +262,41 @@ def test_a_half_rate_minute_sends_no_bpm_rmssd_or_sdnn_but_keeps_its_count() -> 
         None,
     ]
     assert message["minute_count"] == half_rate.count > 0
+
+
+def test_an_hrv_reply_sends_the_range_rounded_to_one_place() -> None:
+    ranged = replace(READING, bpm_low=RANGE_LOW, bpm_high=RANGE_HIGH)
+
+    message = assert_contract(hrv_message(CAPTURE_MS, ranged, None))
+
+    assert (message["bpm_low"], message["bpm_high"]) == (70.0, 74.1)
+
+
+@pytest.mark.parametrize("bad", NON_FINITE)
+@pytest.mark.parametrize("field", ["bpm_low", "bpm_high", "bpm"])
+def test_a_non_finite_range_end_or_minute_bpm_sends_no_range_at_all(
+    field: str, bad: float
+) -> None:
+    ranged = replace(READING, bpm_low=RANGE_LOW, bpm_high=RANGE_HIGH)
+
+    message = hrv_message(CAPTURE_MS, replace(ranged, **{field: bad}), None)
+
+    assert (message["bpm_low"], message["bpm_high"]) == (None, None), message
+    assert message["minute_bpm"] == (None if field == "bpm" else round(MINUTE_BPM, 1))
+    assert_contract(message)
+
+
+def test_a_clean_live_run_sends_a_range_around_its_minute_bpm() -> None:
+    live = LiveHrv()
+    frames = frames_of(WARMED_UP_RUNS["clean"]())
+    for t_ms, colours in frames:
+        live.add(t_ms, colours, moving=False)
+
+    message = assert_contract(
+        hrv_message(frames[-1][0], live.summary(), live.no_reading())
+    )
+
+    assert message["minute_bpm"] is not None
+    assert message["bpm_low"] is not None
+    assert message["bpm_high"] is not None
+    assert message["bpm_low"] <= message["minute_bpm"] <= message["bpm_high"]

@@ -35,8 +35,16 @@ export type Stage = "get-comfy" | "warm-up" | "counted" | "result"
 
 export type VariationKind = "beat-to-beat" | "overall"
 
+export type LikelyRange = { low: number; high: number }
+
 export type RunResult =
-  | { kind: "reading"; bpm: number; beatToBeatMs: number | null; overallMs: number | null }
+  | {
+      kind: "reading"
+      bpm: number
+      likely: LikelyRange | null
+      beatToBeatMs: number | null
+      overallMs: number | null
+    }
   | { kind: "none"; why: AppError }
 
 export type GuidedState = {

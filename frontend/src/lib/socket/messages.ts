@@ -132,6 +132,14 @@ function hasHrvNoReading(value: Fields): boolean {
   return code === "READING_FLOOR_NOT_CLEARED" && (why === "face_left_view" || why === "faint_pulse")
 }
 
+function hasHrvRange(value: Fields): boolean {
+  const { bpm_low: low, bpm_high: high, minute_bpm: bpm } = value
+  if (low === null || high === null) {
+    return low === high
+  }
+  return isFiniteNumber(low) && isFiniteNumber(high) && isFiniteNumber(bpm) && low <= bpm && bpm <= high
+}
+
 function isHrv(value: Fields): boolean {
   return (
     isFiniteNumber(value.t) &&
@@ -139,7 +147,8 @@ function isHrv(value: Fields): boolean {
     Number.isInteger(value.minute_count) &&
     value.minute_count >= 0 &&
     HRV_NUMBERS.every((key) => isNumberOrNull(value[key])) &&
-    hasHrvNoReading(value)
+    hasHrvNoReading(value) &&
+    hasHrvRange(value)
   )
 }
 

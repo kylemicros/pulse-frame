@@ -1,4 +1,4 @@
-import type { Stage, VariationKind } from "@/features/guided-capture/types"
+import type { LikelyRange, Stage, VariationKind } from "@/features/guided-capture/types"
 import type { AppError } from "@/lib/errors"
 import type { HrvMessage } from "@/lib/socket/messages"
 
@@ -210,6 +210,11 @@ export const DISCLAIMER =
 
 export const VARIATION_LINE =
   "Both show how much the gap between your beats shifts, in ms (thousandths of a second). Compare them only with your own runs."
+
+export function averageLine(likely: LikelyRange | null): string {
+  const average = "Average over the last counted minute."
+  return likely === null ? average : `${average} Likely ${likely.low} to ${likely.high}.`
+}
 
 export const NOT_ENOUGH_BEATS = "Not enough beats yet"
 

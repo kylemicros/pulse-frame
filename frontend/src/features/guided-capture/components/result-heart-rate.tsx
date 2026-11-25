@@ -1,3 +1,4 @@
+import { averageLine } from "@/features/guided-capture/lib/run-copy"
 import type { RunResult } from "@/features/guided-capture/types"
 
 type ResultHeartRateProps = {
@@ -24,7 +25,7 @@ export function ResultHeartRate({ result }: ResultHeartRateProps) {
           BPM
         </abbr>
       </dd>
-      <dd className="text-sm text-(--ds-muted)">Average over the last counted minute.</dd>
+      <dd className="text-sm text-(--ds-muted)">{averageLine(result.likely)}</dd>
     </>
   )
 }
