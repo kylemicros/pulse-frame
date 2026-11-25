@@ -1,38 +1,10 @@
 import { expect, type Locator, type Page } from '@playwright/test';
-import type { MockBackend, PatchName } from './mock-backend';
+import type { MockBackend } from './mock-backend';
 
 type Box = { x: number; y: number; width: number; height: number };
 
 type CameraSpy = { calls: number; streams: MediaStream[] };
 type CameraWindow = Window & { cameraSpy: CameraSpy };
-
-export function monitorPage(page: Page) {
-  return {
-    start: page.getByRole('button', { name: 'Start', exact: true }),
-    stop: page.getByRole('button', { name: 'Stop', exact: true }),
-    video: page.getByLabel('Camera preview'),
-    overlay: page.getByRole('img', { name: 'Skin patch overlay' }),
-    outlines: page.getByTestId(/^patch-outline-/),
-    outline: (name: PatchName): Locator => page.getByTestId(`patch-outline-${name}`),
-    overlayToggle: page.getByRole('button', { name: /overlay/i }),
-    heartRate: page.getByRole('region', { name: 'Heart rate' }),
-    bpmValue: page.getByTestId('bpm-value'),
-    quality: page.getByRole('region', { name: 'Signal quality' }),
-    pulse: page.getByRole('region', { name: 'Pulse waveform' }),
-    glanceNotice: page.getByText(/(glanc|look)\w* away/i),
-    alertWith: (code: string): Locator => page.getByRole('alert').filter({ hasText: code }),
-    linkStatus: page
-      .locator('header')
-      .filter({ has: page.getByRole('heading', { name: 'pulse-frame', exact: true }) })
-      .getByRole('status'),
-  };
-}
-
-export async function startMonitoring(page: Page, backend: MockBackend): Promise<void> {
-  await page.goto('/');
-  await monitorPage(page).start.click();
-  await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
-}
 
 export async function waitForMoreFrames(backend: MockBackend, count: number): Promise<void> {
   const target = backend.frames.length + count;
@@ -163,10 +135,6 @@ export async function failPreviewAttach(page: Page): Promise<void> {
 
 export const CODED_ALERT_TEXT = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/;
 
-export function ownTextLength(text: string, ...known: string[]): number {
-  return known.reduce((rest, part) => rest.replace(part, ''), text).trim().length;
-}
-
 export function cameraCalls(page: Page): Promise<number> {
   return page.evaluate(() => (globalThis as unknown as CameraWindow).cameraSpy.calls);
 }
@@ -244,27 +212,18 @@ export function pageNow(page: Page): Promise<number> {
   return page.evaluate(() => performance.now());
 }
 
-export async function advanceClockUntil(page: Page, done: () => boolean, stepMs = 250): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        if (!done()) {
-          await page.clock.runFor(stepMs);
-        }
-        return done();
-      },
-      { intervals: [20] },
-    )
-    .toBe(true);
-}
-
-export async function hintUnderVideo(page: Page, pattern: RegExp): Promise<boolean> {
-  const video = await boxOf(monitorPage(page).video);
-  const boxes = await Promise.all((await page.getByText(pattern).all()).map((match) => match.boundingBox()));
-  return boxes.some(
-    (box) =>
-      box !== null && box.y >= video.y + video.height - 1 && box.x < video.x + video.width && box.width > 0,
-  );
+export async function settleRendering(page: Page): Promise<void> {
+  for (let round = 0; round < 3; round += 1) {
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const channel = new MessageChannel();
+          channel.port1.addEventListener('message', () => resolve());
+          channel.port1.start();
+          channel.port2.postMessage(null);
+        }),
+    );
+  }
 }
 
 const STOPPED_TRACKS_KEY = 'test-stopped-camera-tracks';
@@ -300,14 +259,6 @@ export function endVideoTracks(page: Page): Promise<void> {
   });
 }
 
-export async function setTabHidden(page: Page, hidden: boolean): Promise<void> {
-  await page.evaluate((isHidden) => {
-    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (isHidden ? 'hidden' : 'visible') });
-    Object.defineProperty(document, 'hidden', { configurable: true, get: () => isHidden });
-    document.dispatchEvent(new Event('visibilitychange'));
-  }, hidden);
-}
-
 type TraceSpan = { widthShare: number; rightGapShare: number };
 
 export function waveformSpan(region: Locator): Promise<TraceSpan | null> {
@@ -328,16 +279,10 @@ export function waveformSpan(region: Locator): Promise<TraceSpan | null> {
   });
 }
 
-export async function settleRendering(page: Page): Promise<void> {
-  for (let round = 0; round < 3; round += 1) {
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => {
-          const channel = new MessageChannel();
-          channel.port1.addEventListener('message', () => resolve());
-          channel.port1.start();
-          channel.port2.postMessage(null);
-        }),
-    );
-  }
+export async function setTabHidden(page: Page, hidden: boolean): Promise<void> {
+  await page.evaluate((isHidden) => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (isHidden ? 'hidden' : 'visible') });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => isHidden });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
 }

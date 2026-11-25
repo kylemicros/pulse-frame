@@ -11,12 +11,6 @@ export function sceneHint(scene: FrameMessage | null): SceneHint {
   return "no-face"
 }
 
-export const DASH_REASON: Record<SceneHint, string> = {
-  "no-face": "No face in view. Sit where the camera can see you.",
-  moving: "Hold still for a moment, the pulse hides when you move.",
-  steady: "Can't find a pulse yet. More light helps: daylight beats a lamp.",
-}
-
 export const VIDEO_HINT: Record<SceneHint, string | null> = {
   "no-face": "No face found. Face the camera.",
   moving: "You're moving. Hold still.",

@@ -3,7 +3,8 @@ import { LiveHeartRate } from "@/features/guided-capture/components/live-heart-r
 import { QualityBadge } from "@/features/guided-capture/components/quality-badge"
 import { VariationTiles } from "@/features/guided-capture/components/variation-tiles"
 import { LIVE_WINDOW_TEXT, VARIATION_LATER } from "@/features/guided-capture/lib/run-copy"
-import { qualityBand, type MonitorState } from "@/features/monitor"
+import { qualityBand } from "@/features/guided-capture/lib/quality-band"
+import type { MonitorState } from "@/features/guided-capture/types"
 
 type LiveReadingsProps = {
   monitor: MonitorState

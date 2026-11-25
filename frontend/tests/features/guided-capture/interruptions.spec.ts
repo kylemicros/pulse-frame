@@ -16,14 +16,13 @@ import { MockBackend } from '../../support/mock-backend';
 import {
   cameraTrackStates,
   CODED_ALERT_TEXT,
-  monitorPage,
   refuseCamera,
   removeCameraApi,
   setTabHidden,
   spyOnCamera,
   watchedText,
   watchText,
-} from '../../support/monitor-page';
+} from '../../support/page-helpers';
 
 const ANOTHER_CONNECTION_OPEN = { code: 1013, reason: 'ANOTHER_CONNECTION_OPEN' };
 const DROPPED = { code: 1006 };
@@ -45,7 +44,7 @@ async function expectNoResultLater(page: Page, backend: MockBackend): Promise<vo
   await advanceRun(page, backend, RUN_MS);
   await expect(guided.headline('Done. Nice sitting.')).toHaveCount(0);
   await expect(guided.headline('Done, but no reading this time.')).toHaveCount(0);
-  await expect(guided.panel.getByText('Average over the last counted minute.', { exact: true })).toHaveCount(0);
+  await expect(guided.main.getByText('Average over the last counted minute.', { exact: true })).toHaveCount(0);
   await expect(guided.countedTimer).toHaveCount(0);
   await expect(guided.startAgain).toBeVisible();
   expect(backend.openConnections()).toEqual([]);
@@ -68,8 +67,8 @@ test.describe('guided run interruptions', () => {
     const lines = (await guided.alert.innerText()).split('\n').map((line) => line.trim()).filter(Boolean);
     expect(lines.at(-1)).toBe('Ref: CAMERA_DENIED');
     expect(lines.slice(0, -1).join(' ')).not.toMatch(CODED_ALERT_TEXT);
-    await expect(guided.panel.getByText("Camera's off. The browser said no.")).toBeVisible();
-    await expect(guided.panel.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+    await expect(guided.main.getByText("Camera's off. The browser said no.")).toBeVisible();
+    await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
     await expectCurrentStep(page, 'Get comfy');
     await expect(guided.start).toBeVisible();
     await expect(guided.notEnoughBeats).toHaveCount(2);
@@ -105,14 +104,14 @@ test.describe('guided run interruptions', () => {
       await MockBackend.attach(page);
       const guided = guidedPage(page);
       await openGuidedRun(page);
-      await expect(guided.panel.getByText(FACE_A_WINDOW_CUE)).toBeVisible();
+      await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toBeVisible();
 
       await guided.start.click();
 
-      await expectQuietRef(guided.panel, camera.message, camera.code);
-      await expect(guided.panel.getByText(camera.action)).toBeVisible();
-      await expect(guided.panel.getByText(camera.cameraLine, { exact: true })).toBeVisible();
-      await expect(guided.panel.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+      await expectQuietRef(guided.main, camera.message, camera.code);
+      await expect(guided.main.getByText(camera.action)).toBeVisible();
+      await expect(guided.main.getByText(camera.cameraLine, { exact: true })).toBeVisible();
+      await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
       await expectCurrentStep(page, 'Get comfy');
     });
   }
@@ -131,10 +130,10 @@ test.describe('guided run interruptions', () => {
     backend.refuseEveryConnection(ANOTHER_CONNECTION_OPEN);
     backend.dropOpenConnections(ANOTHER_CONNECTION_OPEN);
 
-    await expectQuietRef(guided.panel, BUSY_MESSAGE, 'SOCKET_BUSY');
-    await expect(guided.panel.getByText(BUSY_ACTION)).toBeVisible();
-    await expect(guided.panel.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
-    await expect(guided.panel.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+    await expectQuietRef(guided.main, BUSY_MESSAGE, 'SOCKET_BUSY');
+    await expect(guided.main.getByText(BUSY_ACTION)).toBeVisible();
+    await expect(guided.main.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
+    await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
     await expectCameraAndSocketClosed(page, backend);
     await expectNoResultLater(page, backend);
   });
@@ -153,43 +152,13 @@ test.describe('guided run interruptions', () => {
     backend.refuseEveryConnection(DROPPED);
     backend.dropOpenConnections(DROPPED);
 
-    await expectQuietRef(guided.panel, UNREACHABLE_MESSAGE, 'SOCKET_UNAVAILABLE');
-    await expect(guided.panel.getByText(UNREACHABLE_ACTION)).toBeVisible();
-    await expect(guided.panel).not.toContainText(/backend|127\.0\.0\.1|uv run|python/i);
-    await expect(guided.panel.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
-    await expect(guided.panel.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+    await expectQuietRef(guided.main, UNREACHABLE_MESSAGE, 'SOCKET_UNAVAILABLE');
+    await expect(guided.main.getByText(UNREACHABLE_ACTION)).toBeVisible();
+    await expect(guided.main).not.toContainText(/backend|127\.0\.0\.1|uv run|python/i);
+    await expect(guided.main.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
+    await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
     await expectCameraAndSocketClosed(page, backend);
     await expectNoResultLater(page, backend);
-  });
-
-  test('stops the run cleanly when the Live monitor tab is chosen mid-run and shows Start again on return', async ({
-    page,
-  }) => {
-    await spyOnCamera(page);
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    const guided = guidedPage(page);
-    await startRun(page, backend);
-    await advanceRun(page, backend, 10000);
-
-    await guided.liveTab.click();
-
-    await expect(monitorPage(page).start).toBeVisible();
-    await expectCameraAndSocketClosed(page, backend);
-    const framesAfterLeaving = backend.frames.length;
-
-    await guided.guidedTab.click();
-
-    await expect(guided.panel.getByText(RUN_STOPPED_TEXT, { exact: true })).toBeVisible();
-    await expect(guided.milestones).toHaveText(RUN_STOPPED_TEXT);
-    await expect(guided.panel.getByText("Camera's off. Run stopped.", { exact: true })).toBeVisible();
-    await expect(guided.panel).not.toContainText(/Ref: /);
-    await expect(guided.startAgain).toBeVisible();
-    await expect(guided.stop).toHaveCount(0);
-    await expect(guided.warmUpTimer).toHaveCount(0);
-    await advanceRun(page, backend, 70000);
-    await expect(guided.countedTimer).toHaveCount(0);
-    expect(backend.frames.length).toBe(framesAfterLeaving);
   });
 
   test('stops the run when the browser tab is hidden and explains it with a quiet Ref: PAGE_HIDDEN last', async ({
@@ -208,10 +177,10 @@ test.describe('guided run interruptions', () => {
     await page.clock.fastForward(30000);
     await setTabHidden(page, false);
 
-    await expect(guided.panel).toContainText('Keep this tab in front for the whole run, then press Start again.');
-    await expectQuietRef(guided.panel, 'The page was hidden, so the run stopped.', 'PAGE_HIDDEN');
-    await expect(guided.panel.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
-    await expect(guided.panel.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+    await expect(guided.main).toContainText('Keep this tab in front for the whole run, then press Start again.');
+    await expectQuietRef(guided.main, 'The page was hidden, so the run stopped.', 'PAGE_HIDDEN');
+    await expect(guided.main.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
+    await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
     await expect(guided.startAgain).toBeVisible();
     await expect(guided.stop).toHaveCount(0);
     await expect(guided.countedTimer).toHaveCount(0);
@@ -231,13 +200,13 @@ test.describe('guided run interruptions', () => {
     await guided.stop.click();
 
     await expectCameraAndSocketClosed(page, backend);
-    await expect(guided.panel.getByText(RUN_STOPPED_TEXT, { exact: true })).toBeVisible();
+    await expect(guided.main.getByText(RUN_STOPPED_TEXT, { exact: true })).toBeVisible();
     await expect(guided.milestones).toHaveText(RUN_STOPPED_TEXT);
     await expect(guided.milestones).toHaveRole('status');
     const spoken = (await watchedText(page, 'milestones')).map((change) => change.text.trim());
     expect(spoken.filter((text) => text === RUN_STOPPED_TEXT)).toHaveLength(1);
-    await expect(guided.panel.getByText("Camera's off. Run stopped.", { exact: true })).toBeVisible();
-    await expect(guided.panel).not.toContainText(/Ref: /);
+    await expect(guided.main.getByText("Camera's off. Run stopped.", { exact: true })).toBeVisible();
+    await expect(guided.main).not.toContainText(/Ref: /);
     await expect(guided.startAgain).toBeVisible();
     await expect(guided.warmUpTimer).toHaveCount(0);
     await expect(page).not.toHaveTitle(/^(Warm-up|Counting),/);

@@ -47,9 +47,9 @@ test.describe('guided run phases', () => {
     await expect(guided.warmUpBar).toHaveAttribute('aria-valuemin', '0');
     await expect(guided.warmUpBar).toHaveAttribute('aria-valuemax', '100');
     await expect(guided.warmUpBar).toHaveAttribute('aria-valuetext', /percent/);
-    await expect(guided.panel.getByText(`${warmUp}%`, { exact: true })).toBeVisible();
+    await expect(guided.main.getByText(`${warmUp}%`, { exact: true })).toBeVisible();
     await expect(guided.countedBar).toHaveAttribute('aria-valuenow', '0');
-    await expect(guided.panel.getByText('0%', { exact: true })).toBeVisible();
+    await expect(guided.main.getByText('0%', { exact: true })).toBeVisible();
   });
 
   test('shows the 20 s settle as its own percent bar inside the warm-up while no heart rate is ready', async ({
@@ -108,7 +108,7 @@ test.describe('guided run phases', () => {
     const halfway = await valueNow(guided.countedBar);
     expect(halfway).toBeGreaterThanOrEqual(45);
     expect(halfway).toBeLessThanOrEqual(60);
-    await expect(guided.panel.getByText(`${halfway}%`, { exact: true })).toBeVisible();
+    await expect(guided.main.getByText(`${halfway}%`, { exact: true })).toBeVisible();
     await expect(guided.countedBar).toHaveAttribute('aria-valuetext', /percent/);
 
     await advanceRun(page, backend, 39000);

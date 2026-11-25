@@ -6,7 +6,7 @@ import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { build, preview, type PreviewServer } from 'vite';
 import { advanceRun, advanceRunUntil, guidedPage, pushAndConfirm, RUN_STOPPED_TEXT } from './support/guided-page';
 import { faceScene, MockBackend, STREAM_URL } from './support/mock-backend';
-import { longestPathCommands, monitorPage, refuseCamera, setTabHidden, videoIsPlaying } from './support/monitor-page';
+import { longestPathCommands, refuseCamera, setTabHidden, videoIsPlaying } from './support/page-helpers';
 
 const FRONTEND_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -95,7 +95,7 @@ async function guidedLinkLost(page: Page, session: Session, close: { code: numbe
   session.backend.dropOpenConnections(close);
 }
 
-test.describe('monitor page screenshots', () => {
+test.describe('guided page screenshots', () => {
   test.describe.configure({ mode: 'default' });
 
   let outDir = '';
@@ -124,71 +124,13 @@ test.describe('monitor page screenshots', () => {
     await expectOnlyFakeDevices(page);
   }
 
-  async function idle(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-    const session = await attachMockOnly(page);
-    const monitor = monitorPage(page);
-
-    await openBuiltPage(page);
-
-    await expect(monitor.start).toBeVisible();
-    await expect(monitor.quality.getByText('No value yet.', { exact: true })).toBeVisible();
-    expect(session.backend.connections).toEqual([]);
-    await expectOnlyMockedSockets(session);
-    await capture(page, testInfo, name);
-  }
-
-  async function settling(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-    const session = await attachMockOnly(page);
-    const monitor = monitorPage(page);
-
-    await openBuiltPage(page);
-    await monitor.start.click();
-
-    await expect.poll(() => session.backend.frames.length).toBeGreaterThan(1);
-    await expect.poll(() => videoIsPlaying(monitor.video)).toBe(true);
-    await expect(monitor.heartRate).toContainText(/Settling \d+ s/);
-    expect(session.backend.openConnections()).toHaveLength(1);
-    await expectOnlyMockedSockets(session);
-    await capture(page, testInfo, name);
-  }
-
-  async function reading(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-    const session = await attachMockOnly(page);
-    const monitor = monitorPage(page);
-
-    await openBuiltPage(page);
-    await monitor.start.click();
-    await expect.poll(() => session.backend.frames.length).toBeGreaterThan(1);
-    session.backend.pushReading(OK_READING);
-
-    await expect(monitor.bpmValue).toHaveText(SHOWN_BPM);
-    await expect.poll(() => longestPathCommands(monitor.pulse)).toBeGreaterThan(10);
-    await expect.poll(() => videoIsPlaying(monitor.video)).toBe(true);
-    expect(session.backend.openConnections()).toHaveLength(1);
-    await expectOnlyMockedSockets(session);
-    await capture(page, testInfo, name);
-  }
-
-  async function cameraDenied(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-    await refuseCamera(page, 'NotAllowedError');
-    const session = await attachMockOnly(page);
-    const monitor = monitorPage(page);
-
-    await openBuiltPage(page);
-    await monitor.start.click();
-
-    await expect(monitor.alertWith('CAMERA_DENIED')).toBeVisible();
-    await expectOnlyMockedSockets(session);
-    await capture(page, testInfo, name);
-  }
-
   async function openBuiltGuidedRun(page: Page): Promise<Session> {
     const session = await attachMockOnly(page);
     await page.clock.install();
     await openBuiltPage(page);
     const guided = guidedPage(page);
-    await guided.guidedTab.click();
-    await expect(guided.panel).toBeVisible();
+    await expect(guided.stepList).toBeVisible();
+    await expect(page.getByRole('tablist')).toHaveCount(0);
     return session;
   }
 
@@ -198,6 +140,8 @@ test.describe('monitor page screenshots', () => {
 
     await expect(guided.start).toBeVisible();
     await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
+    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
+    await expect(guided.outlines).toHaveCount(0);
     expect(session.backend.connections).toEqual([]);
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
@@ -212,7 +156,26 @@ test.describe('monitor page screenshots', () => {
 
     await expect(guided.warmUpTimer).toBeVisible();
     await expect(guided.settleBar).toBeVisible();
-    await expect.poll(() => videoIsPlaying(guided.panel.getByLabel('Camera preview'))).toBe(true);
+    await expect.poll(() => videoIsPlaying(guided.video)).toBe(true);
+    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
+    await expect(guided.outlines).toHaveCount(3);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedOutlineOff(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+    await advanceRun(page, session.backend, 12000, 2500);
+    await expect(guided.outlines).toHaveCount(3);
+
+    await guided.skinOutline.click();
+    await advanceRun(page, session.backend, 1000, 250);
+
+    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'false');
+    await expect(guided.outlines).toHaveCount(0);
+    await expect.poll(() => videoIsPlaying(guided.video)).toBe(true);
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
   }
@@ -227,8 +190,9 @@ test.describe('monitor page screenshots', () => {
     session.backend.setScene(faceScene({ moving: true }));
     await advanceRun(page, session.backend, 3000, 1000);
 
-    await expect(guided.panel.getByText("You're moving. Hold still.", { exact: true })).toBeVisible();
+    await expect(guided.main.getByText("You're moving. Hold still.", { exact: true })).toBeVisible();
     await expect(guided.liveReadings.getByText(/^67(\.2)?$/)).toBeVisible();
+    await expect(guided.outlines).toHaveCount(3);
     await expect.poll(() => longestPathCommands(guided.pulseTrace)).toBeGreaterThan(10);
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
@@ -257,7 +221,7 @@ test.describe('monitor page screenshots', () => {
     await advanceRunUntil(page, session.backend, guided.startAgain);
 
     await expect(guided.headline('Done, but no reading this time.')).toBeVisible();
-    await expect(guided.panel.getByText('Ref: NO_READING', { exact: true })).toBeVisible();
+    await expect(guided.main.getByText('Ref: NO_READING', { exact: true })).toBeVisible();
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
   }
@@ -296,7 +260,7 @@ test.describe('monitor page screenshots', () => {
 
     await guidedLinkLost(page, session, { code: 1013, reason: 'ANOTHER_CONNECTION_OPEN' });
 
-    await expect(guided.panel.getByText('Ref: SOCKET_BUSY', { exact: true })).toBeVisible();
+    await expect(guided.main.getByText('Ref: SOCKET_BUSY', { exact: true })).toBeVisible();
     await expect(guided.startAgain).toBeVisible();
     await expect.poll(() => session.backend.openConnections().length).toBe(0);
     await capture(page, testInfo, name);
@@ -308,7 +272,7 @@ test.describe('monitor page screenshots', () => {
 
     await guidedLinkLost(page, session, { code: 1006 });
 
-    await expect(guided.panel.getByText('Ref: SOCKET_UNAVAILABLE', { exact: true })).toBeVisible();
+    await expect(guided.main.getByText('Ref: SOCKET_UNAVAILABLE', { exact: true })).toBeVisible();
     await expect(guided.startAgain).toBeVisible();
     await expect.poll(() => session.backend.openConnections().length).toBe(0);
     await capture(page, testInfo, name);
@@ -325,7 +289,7 @@ test.describe('monitor page screenshots', () => {
     await expect.poll(() => session.backend.openConnections().length).toBe(0);
     await setTabHidden(page, false);
 
-    await expect(guided.panel.getByText('Ref: PAGE_HIDDEN', { exact: true })).toBeVisible();
+    await expect(guided.main.getByText('Ref: PAGE_HIDDEN', { exact: true })).toBeVisible();
     await expect(guided.startAgain).toBeVisible();
     await capture(page, testInfo, name);
   }
@@ -339,7 +303,7 @@ test.describe('monitor page screenshots', () => {
 
     await guided.stop.click();
 
-    await expect(guided.panel.getByText(RUN_STOPPED_TEXT, { exact: true })).toBeVisible();
+    await expect(guided.main.getByText(RUN_STOPPED_TEXT, { exact: true })).toBeVisible();
     await expect(guided.startAgain).toBeVisible();
     await expect.poll(() => session.backend.openConnections().length).toBe(0);
     await capture(page, testInfo, name);
@@ -347,7 +311,8 @@ test.describe('monitor page screenshots', () => {
 
   const GUIDED_STATES = [
     { state: 'idle', title: 'the guided run idle page', shoot: guidedIdle },
-    { state: 'warm-up', title: 'the guided run warm-up', shoot: guidedWarmUp },
+    { state: 'warm-up', title: 'the guided run warm-up with the skin outline on', shoot: guidedWarmUp },
+    { state: 'outline-off', title: 'the guided run warm-up with the skin outline off', shoot: guidedOutlineOff },
     { state: 'counting', title: 'the guided run counting with the hold still hint', shoot: guidedCounting },
     { state: 'done', title: 'the guided run result', shoot: guidedDone },
     { state: 'no-reading', title: 'the guided run with no reading', shoot: guidedNoReading },
@@ -360,42 +325,6 @@ test.describe('monitor page screenshots', () => {
   ] as const;
 
   for (const viewport of VIEWPORTS) {
-    test.describe(`${viewport.name} screenshots`, () => {
-      test.use({ viewport: viewport.size });
-
-      test(`screenshots the idle page at ${viewport.name} width`, async ({ page }, testInfo) => {
-        await idle(page, testInfo, `${viewport.name}-idle`);
-      });
-
-      test(`screenshots the settling page at ${viewport.name} width`, async ({ page }, testInfo) => {
-        await settling(page, testInfo, `${viewport.name}-settling`);
-      });
-
-      test(`screenshots a live reading at ${viewport.name} width`, async ({ page }, testInfo) => {
-        await reading(page, testInfo, `${viewport.name}-reading`);
-      });
-
-      test(`screenshots the camera denied error at ${viewport.name} width`, async ({ page }, testInfo) => {
-        await cameraDenied(page, testInfo, `${viewport.name}-camera-denied`);
-      });
-    });
-
-    test.describe(`${viewport.name} dark theme screenshots`, () => {
-      test.use({ viewport: viewport.size, colorScheme: 'dark' });
-
-      test(`screenshots the idle page in the dark theme at ${viewport.name} width`, async ({ page }, testInfo) => {
-        await idle(page, testInfo, `${viewport.name}-dark-idle`);
-      });
-
-      test(`screenshots a live reading in the dark theme at ${viewport.name} width`, async ({ page }, testInfo) => {
-        await reading(page, testInfo, `${viewport.name}-dark-reading`);
-      });
-
-      test(`screenshots the camera denied error in the dark theme at ${viewport.name} width`, async ({ page }, testInfo) => {
-        await cameraDenied(page, testInfo, `${viewport.name}-dark-camera-denied`);
-      });
-    });
-
     test.describe(`${viewport.name} guided run screenshots`, () => {
       test.use({ viewport: viewport.size });
 

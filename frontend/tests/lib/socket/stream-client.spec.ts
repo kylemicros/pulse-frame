@@ -1,35 +1,59 @@
-import { expect, test, type Locator } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import { expectQuietRef, guidedPage, openGuidedRun, startRun } from '../../support/guided-page';
 import { MockBackend, WIRE_ERRORS } from '../../support/mock-backend';
-import {
-  advanceClockUntil,
-  monitorPage,
-  ownTextLength,
-  settleRendering,
-  startMonitoring,
-  waitForMoreFrames,
-  watchedText,
-  watchText,
-} from '../../support/monitor-page';
-import { retryGaps, socketRecords } from '../../support/socket-recorder';
+import { settleRendering, waitForMoreFrames } from '../../support/page-helpers';
+import { socketRecords } from '../../support/socket-recorder';
 
-const ANOTHER_CONNECTION_OPEN = { code: 1013, reason: 'ANOTHER_CONNECTION_OPEN' };
-const DROPPED = { code: 1006 };
-const PAST_ANY_BACKOFF_MS = 20000;
+const WAIT_AFTER_CLOSE_MS = 20000;
+
+const TERMINAL_CLOSES = [
+  {
+    code: 'MODEL_LOAD_FAILED',
+    close: { code: 1011, reason: 'MODEL_LOAD_FAILED' },
+    message: "The pulse reader couldn't load the part that finds your face, so the run stopped.",
+  },
+  {
+    code: 'MESSAGE_TOO_BIG',
+    close: { code: 1009 },
+    message: "The pulse reader hung up because this page sent far too much at once. That's a bug in this page.",
+  },
+  {
+    code: 'BACKEND_FAILED',
+    close: { code: 1011, reason: 'INTERNAL_ERROR' },
+    message: 'The pulse reader tripped over its own feet, so the run stopped.',
+  },
+];
+
+type WireCode = keyof typeof WIRE_ERRORS;
+
+const PLAIN_WIRE_WORDS: Record<WireCode, string> = {
+  BAD_FRAME: "A split second of video couldn't be read, so it was skipped.",
+  BAD_TIMESTAMP: "A split second of video arrived with a time that didn't add up, so it was skipped.",
+  FRAME_TOO_LARGE: 'A split second of video was too big to read, so it was skipped.',
+  RATE_LIMITED: 'Video came in faster than the pulse reader takes it, so a split second was dropped.',
+};
+
+const UNKNOWN_CODE_MESSAGE = "The pulse reader flagged a problem but didn't say what.";
+
+const BAD_REPLY_MESSAGE =
+  "The pulse reader sent something this page can't read, so it was ignored. The numbers may stall.";
 
 function gapsBetween(times: number[]): number[] {
   return times.slice(1).map((time, index) => time - times[index]);
 }
 
-async function expectMessageAndAction(alert: Locator, code: string): Promise<void> {
-  const text = await alert.innerText();
-  expect(text.replace(code, '').trim().length).toBeGreaterThan(40);
+async function expectOneConnectionOnly(page: Page, backend: MockBackend): Promise<void> {
+  await page.clock.runFor(WAIT_AFTER_CLOSE_MS);
+  await settleRendering(page);
+  expect(await socketRecords(page)).toHaveLength(1);
+  expect(backend.connections).toHaveLength(1);
 }
 
 test.describe('stream socket client', () => {
-  test('keeps exactly one connection open while monitoring', async ({ page }) => {
+  test('keeps exactly one connection open during a guided run', async ({ page }) => {
     const backend = await MockBackend.attach(page);
 
-    await startMonitoring(page, backend);
+    await startRun(page, backend);
     await waitForMoreFrames(backend, 5);
 
     const open = backend.openConnections();
@@ -41,7 +65,7 @@ test.describe('stream socket client', () => {
     const backend = await MockBackend.attach(page);
     backend.setReplyDelay(250);
 
-    await startMonitoring(page, backend);
+    await startRun(page, backend);
     await waitForMoreFrames(backend, 4);
 
     expect(backend.frames.filter((frame) => frame.arrivedWhileAwaitingReply)).toEqual([]);
@@ -50,7 +74,7 @@ test.describe('stream socket client', () => {
   test('spaces frame sends at least 34 ms apart', async ({ page }) => {
     const backend = await MockBackend.attach(page);
 
-    await startMonitoring(page, backend);
+    await startRun(page, backend);
     await waitForMoreFrames(backend, 25);
 
     const [streaming] = backend.openConnections();
@@ -61,179 +85,57 @@ test.describe('stream socket client', () => {
     expect(Math.min(...arrivalGaps)).toBeGreaterThanOrEqual(25);
   });
 
-  test('retries with growing delays while another connection holds the backend', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection(ANOTHER_CONNECTION_OPEN);
-    const monitor = monitorPage(page);
+  for (const terminal of TERMINAL_CLOSES) {
+    test(`stops with a quiet Ref: ${terminal.code} and never reconnects when the backend closes that way`, async ({
+      page,
+    }) => {
+      await page.clock.install();
+      const backend = await MockBackend.attach(page);
+      backend.refuseEveryConnection(terminal.close);
+      const guided = guidedPage(page);
 
-    await page.goto('/');
-    await monitor.start.click();
-    await advanceClockUntil(page, () => backend.connections.length >= 6);
+      await openGuidedRun(page);
+      await guided.start.click();
 
-    const records = (await socketRecords(page)).slice(0, 6);
-    expect(records.map((record) => record.openedAt !== null)).toEqual([true, true, true, true, true, true]);
-    expect(records.slice(0, 5).map((record) => record.closeCode)).toEqual([1013, 1013, 1013, 1013, 1013]);
-    const gaps = retryGaps(records);
-    expect(gaps[0]).toBeGreaterThanOrEqual(100);
-    expect(gaps[4]).toBeGreaterThanOrEqual(3 * gaps[1]);
+      await expectQuietRef(guided.main, terminal.message, terminal.code);
+      await expect(guided.stop).toHaveCount(0);
 
-    backend.acceptEveryConnection();
+      await expectOneConnectionOnly(page, backend);
+      await expect(guided.main.getByText(terminal.message)).toBeVisible();
+    });
+  }
 
-    await advanceClockUntil(page, () => backend.openConnections().length === 1);
-    await waitForMoreFrames(backend, 3);
-  });
-
-  test('shows SOCKET_UNAVAILABLE when the backend is not reachable and retries with growing delays', async ({
+  test('shows a quiet Ref: BAD_REPLY for an unreadable reply and keeps streaming on the same connection', async ({
     page,
   }) => {
-    await page.clock.install();
     const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection(DROPPED);
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-
-    const alert = monitor.alertWith('SOCKET_UNAVAILABLE');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/backend/i);
-    await expect(alert).toContainText(/not running|not reachable|cannot reach|can't reach|could not reach/i);
-
-    await advanceClockUntil(page, () => backend.connections.length >= 6);
-    const gaps = retryGaps((await socketRecords(page)).slice(0, 6));
-    expect(gaps[0]).toBeGreaterThanOrEqual(100);
-    expect(gaps[4]).toBeGreaterThanOrEqual(3 * gaps[1]);
-
-    backend.acceptEveryConnection();
-
-    await advanceClockUntil(page, () => backend.openConnections().length === 1);
-    await waitForMoreFrames(backend, 3);
-    await expect(alert).toBeHidden();
-  });
-
-  test('keeps saying the backend is not reachable through each reconnect attempt', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection(DROPPED);
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-    await expect(monitor.linkStatus).toHaveText(/not reachable/i);
-    await watchText(monitor.linkStatus, 'link');
-    const connectionsBefore = backend.connections.length;
-
-    await advanceClockUntil(page, () => backend.connections.length >= connectionsBefore + 3);
-    await settleRendering(page);
-
-    const shown = (await watchedText(page, 'link')).map((change) => change.text);
-    expect(shown.filter((text) => !/not reachable/i.test(text))).toEqual([]);
-  });
-
-  test('explains MODEL_LOAD_FAILED and stops instead of retrying', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection({ code: 1011, reason: 'MODEL_LOAD_FAILED' });
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-
-    const alert = monitor.alertWith('MODEL_LOAD_FAILED');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/model/i);
-    await expect(alert).toContainText(/restart/i);
-    await expect(monitor.start).toBeVisible();
-
-    await page.clock.runFor(PAST_ANY_BACKOFF_MS);
-    await settleRendering(page);
-
-    expect(await socketRecords(page)).toHaveLength(1);
-    expect(backend.connections).toHaveLength(1);
-    await expect(alert).toBeVisible();
-  });
-
-  test('explains MESSAGE_TOO_BIG when the backend closes with 1009 and does not retry', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection({ code: 1009 });
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-
-    const alert = monitor.alertWith('MESSAGE_TOO_BIG');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/too big|too large/i);
-    await expect(alert).toContainText(/\bStart\b/);
-    await expectMessageAndAction(alert, 'MESSAGE_TOO_BIG');
-    await expect(monitor.start).toBeVisible();
-
-    await page.clock.runFor(PAST_ANY_BACKOFF_MS);
-    await settleRendering(page);
-
-    expect(await socketRecords(page)).toHaveLength(1);
-    expect(backend.connections).toHaveLength(1);
-  });
-
-  test('shows BACKEND_FAILED when the backend closes with 1011 for another reason', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection({ code: 1011, reason: 'INTERNAL_ERROR' });
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-
-    const alert = monitor.alertWith('BACKEND_FAILED');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/backend/i);
-    await expect(alert).toContainText(/restart/i);
-    await expectMessageAndAction(alert, 'BACKEND_FAILED');
-    await expect(monitor.alertWith('MODEL_LOAD_FAILED')).toHaveCount(0);
-    await expect(monitor.start).toBeVisible();
-
-    await page.clock.runFor(PAST_ANY_BACKOFF_MS);
-    await settleRendering(page);
-
-    expect(await socketRecords(page)).toHaveLength(1);
-  });
-
-  test('shows BAD_REPLY for an unreadable reply until the next good message', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-    await startMonitoring(page, backend);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
+    const [streaming] = backend.openConnections();
 
     backend.sendUnreadableNext('{"type": "frame", "t": ', { holdAfter: true });
 
-    const alert = monitor.alertWith('BAD_REPLY');
-    await expect(alert).toBeVisible();
-    await expectMessageAndAction(alert, 'BAD_REPLY');
-
-    await page.clock.runFor(8000);
-    await settleRendering(page);
-
-    await expect(alert).toBeVisible();
+    await expectQuietRef(guided.main, BAD_REPLY_MESSAGE, 'BAD_REPLY');
+    await expect(guided.stop).toBeVisible();
 
     backend.releaseReplies();
 
-    await expect(alert).toBeHidden();
     await waitForMoreFrames(backend, 3);
+    expect(backend.openConnections().map((connection) => connection.id)).toEqual([streaming.id]);
+    await expect(guided.stop).toBeVisible();
   });
 
-  for (const wire of Object.values(WIRE_ERRORS)) {
-    test(`shows its own words for ${wire.code} and keeps streaming`, async ({ page }) => {
+  for (const [code, wire] of Object.entries(WIRE_ERRORS) as Array<[WireCode, (typeof WIRE_ERRORS)[WireCode]]>) {
+    test(`keeps streaming on one connection after a ${code} reply, in plain words, never the server's`, async ({
+      page,
+    }) => {
       const backend = await MockBackend.attach(page);
-      const monitor = monitorPage(page);
-      await startMonitoring(page, backend);
+      const guided = guidedPage(page);
+      await startRun(page, backend);
 
       backend.replyNextWithError(wire, { holdAfter: true });
 
-      const alert = monitor.alertWith(wire.code);
-      await expect(alert).toBeVisible();
-      await expect(alert).not.toHaveText(wire.code);
+      await expectQuietRef(guided.main, PLAIN_WIRE_WORDS[code], code);
       await expect(page.getByText(wire.message)).toHaveCount(0);
       await expect(page.getByText(wire.action)).toHaveCount(0);
       const [sent] = backend.sentErrors;
@@ -246,10 +148,10 @@ test.describe('stream socket client', () => {
   }
 
   for (const code of ['toString', 'constructor']) {
-    test(`shows the server's own message and action for the wire code ${code}`, async ({ page }) => {
+    test(`treats the wire code ${code} as unknown, never as a known word list entry`, async ({ page }) => {
       const backend = await MockBackend.attach(page);
-      const monitor = monitorPage(page);
-      await startMonitoring(page, backend);
+      const guided = guidedPage(page);
+      await startRun(page, backend);
       const wire = {
         code,
         message: `The backend reports a ${code} fault on this turn.`,
@@ -258,129 +160,18 @@ test.describe('stream socket client', () => {
 
       backend.replyNextWithError(wire);
 
-      const alert = monitor.alertWith(code);
-      await expect(alert).toBeVisible();
-      await expect(alert).toContainText(wire.message);
-      await expect(alert).toContainText(wire.action);
+      await expect(guided.main.getByText(UNKNOWN_CODE_MESSAGE)).toBeVisible();
+      await expect(guided.main.getByText(`Ref: ${code}`, { exact: true })).toBeVisible();
+      await expect(page.getByText(wire.message)).toHaveCount(0);
+      await expect(page.getByText(wire.action)).toHaveCount(0);
       await waitForMoreFrames(backend, 3);
-    });
-  }
-
-  test('tells where to open the page in the SOCKET_UNAVAILABLE action', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection(DROPPED);
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-
-    const alert = monitor.alertWith('SOCKET_UNAVAILABLE');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText('http://127.0.0.1:4173');
-    await expect(alert).toContainText(/already running/i);
-  });
-
-  test('says the stream may have stalled and to press Stop, then Start, in BAD_REPLY', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    const monitor = monitorPage(page);
-    await startMonitoring(page, backend);
-
-    backend.sendUnreadableNext('{"type": "frame", "t": ', { holdAfter: true });
-
-    const alert = monitor.alertWith('BAD_REPLY');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/stall/i);
-    await expect(alert).toContainText(/\bStop\b,? then\b[^.]*\bStart\b/);
-    await expect(alert).toContainText(/latest code/i);
-    await expect(alert).toContainText(/rebuild/i);
-    await expect(alert).toContainText(/restart\w* the backend/i);
-
-    backend.releaseReplies();
-    await expect(alert).toBeHidden();
-  });
-
-  test('points MODEL_LOAD_FAILED at the backend terminal and the backend folder', async ({ page }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection({ code: 1011, reason: 'MODEL_LOAD_FAILED' });
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-
-    const alert = monitor.alertWith('MODEL_LOAD_FAILED');
-    await expect(alert).toBeVisible();
-    await expect(alert).toContainText(/terminal/i);
-    await expect(alert).toContainText('backend/');
-    await expect(alert).toContainText(/restart/i);
-    await expect(alert).toContainText(/\bStart\b/);
-  });
-
-  test('says to close the other tab or press Stop there while another connection holds the backend', async ({
-    page,
-  }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection(ANOTHER_CONNECTION_OPEN);
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-    await advanceClockUntil(page, () => backend.connections.length >= 2);
-
-    await expect(monitor.linkStatus).toContainText(/\bclos(e|ing)\b[^.]*\bother tab\b/i);
-    await expect(monitor.linkStatus).toContainText(/\bStop\b/);
-  });
-
-  test('keeps naming the other tab through each reconnect attempt while another connection holds the backend', async ({
-    page,
-  }) => {
-    await page.clock.install();
-    const backend = await MockBackend.attach(page);
-    backend.refuseEveryConnection(ANOTHER_CONNECTION_OPEN);
-    const monitor = monitorPage(page);
-
-    await page.goto('/');
-    await monitor.start.click();
-    await expect(monitor.linkStatus).toContainText(/\bother tab\b/i);
-    await watchText(monitor.linkStatus, 'busy-link');
-    const connectionsBefore = backend.connections.length;
-
-    await advanceClockUntil(page, () => backend.connections.length >= connectionsBefore + 3);
-    await settleRendering(page);
-
-    const shown = (await watchedText(page, 'busy-link')).map((change) => change.text);
-    expect(shown.filter((text) => !/\bother tab\b/i.test(text))).toEqual([]);
-  });
-
-  for (const empty of ['message', 'action'] as const) {
-    test(`shows the page's own fallback text when a wire error has an empty ${empty}`, async ({ page }) => {
-      const backend = await MockBackend.attach(page);
-      const monitor = monitorPage(page);
-      await startMonitoring(page, backend);
-      const wire = {
-        code: 'TURN_FAILED',
-        message: 'The backend could not finish this turn.',
-        action: 'Wait for the next frame; report it if it repeats.',
-        [empty]: '',
-      };
-      const kept = empty === 'message' ? wire.action : wire.message;
-
-      backend.replyNextWithError(wire);
-
-      const alert = monitor.alertWith('TURN_FAILED');
-      await expect(alert).toBeVisible();
-      await expect(alert).toContainText(kept);
-      expect(ownTextLength(await alert.innerText(), 'TURN_FAILED', kept)).toBeGreaterThan(20);
-      await waitForMoreFrames(backend, 3);
+      await expect(guided.stop).toBeVisible();
     });
   }
 
   test('ignores duplicate turn replies so two frames are never in flight', async ({ page }) => {
     const backend = await MockBackend.attach(page);
-    await startMonitoring(page, backend);
+    await startRun(page, backend);
     await waitForMoreFrames(backend, 3);
     const [streaming] = backend.openConnections();
 

@@ -1,5 +1,5 @@
 import { cn } from "cn"
-import type { QualityBand } from "@/features/monitor"
+import type { QualityBand } from "@/features/guided-capture/lib/quality-band"
 
 const WORD: Record<QualityBand, string> = { weak: "Weak", fair: "Fair", good: "Good" }
 

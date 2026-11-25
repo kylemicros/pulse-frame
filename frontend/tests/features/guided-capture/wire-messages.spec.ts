@@ -8,7 +8,7 @@ import {
   timerSeconds,
 } from '../../support/guided-page';
 import { MockBackend, WIRE_ERRORS } from '../../support/mock-backend';
-import { waitForMoreFrames } from '../../support/monitor-page';
+import { waitForMoreFrames } from '../../support/page-helpers';
 
 const NOTICE_SHOWN_MS = 5000;
 const CARRIES_ON = 'Nothing to do; the run carries on.';
@@ -27,10 +27,10 @@ test.describe('guided run wire messages', () => {
 
     backend.replyNextWithError(WIRE_ERRORS.BAD_FRAME);
 
-    await expectQuietRef(guided.panel, "A split second of video couldn't be read, so it was skipped.", 'BAD_FRAME');
-    await expect(guided.panel.getByText(CARRIES_ON)).toBeVisible();
-    await expect(guided.panel).not.toContainText(WIRE_ERRORS.BAD_FRAME.message);
-    await expect(guided.panel).not.toContainText(/backend/i);
+    await expectQuietRef(guided.main, "A split second of video couldn't be read, so it was skipped.", 'BAD_FRAME');
+    await expect(guided.main.getByText(CARRIES_ON)).toBeVisible();
+    await expect(guided.main).not.toContainText(WIRE_ERRORS.BAD_FRAME.message);
+    await expect(guided.main).not.toContainText(/backend/i);
     await expectCurrentStep(page, 'Warm-up');
     await expect(guided.stop).toBeVisible();
   });
@@ -45,9 +45,9 @@ test.describe('guided run wire messages', () => {
 
     backend.replyNextWithError(UNKNOWN_WIRE_ERROR);
 
-    await expectQuietRef(guided.panel, "The pulse reader flagged a problem but didn't say what.", 'READER_HICCUP');
-    await expect(guided.panel.getByText(CARRIES_ON)).toBeVisible();
-    await expect(guided.panel).not.toContainText(/Traceback|pulse_frame|uvicorn|reload flag/);
+    await expectQuietRef(guided.main, "The pulse reader flagged a problem but didn't say what.", 'READER_HICCUP');
+    await expect(guided.main.getByText(CARRIES_ON)).toBeVisible();
+    await expect(guided.main).not.toContainText(/Traceback|pulse_frame|uvicorn|reload flag/);
     await expectCurrentStep(page, 'Warm-up');
   });
 
@@ -56,19 +56,19 @@ test.describe('guided run wire messages', () => {
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
     await startRun(page, backend);
-    const notice = guided.panel.getByText(
+    const notice = guided.main.getByText(
       'Video came in faster than the pulse reader takes it, so a split second was dropped.',
     );
 
     backend.replyNextWithError(WIRE_ERRORS.RATE_LIMITED);
     await expect(notice).toBeVisible();
-    await expect(guided.panel.getByText('Ref: RATE_LIMITED', { exact: true })).toBeVisible();
+    await expect(guided.main.getByText('Ref: RATE_LIMITED', { exact: true })).toBeVisible();
     const before = await timerSeconds(guided.warmUpTimer);
 
     await advanceRun(page, backend, NOTICE_SHOWN_MS + 1000, 1000);
 
     await expect(notice).toHaveCount(0);
-    await expect(guided.panel.getByText('Ref: RATE_LIMITED', { exact: true })).toHaveCount(0);
+    await expect(guided.main.getByText('Ref: RATE_LIMITED', { exact: true })).toHaveCount(0);
     await expectCurrentStep(page, 'Warm-up');
     expect(await timerSeconds(guided.warmUpTimer)).toBeLessThanOrEqual(before - 5);
     await waitForMoreFrames(backend, 3);

@@ -222,7 +222,7 @@
                 "group": [
                   "@/features/*/**"
                 ],
-                "message": "This feature has no import rules yet, so deep @/features imports are blocked. Add an override for its folder to frontend/.oxlintrc.json, copying the capture or monitor block."
+                "message": "This feature has no import rules yet, so deep @/features imports are blocked. Add an override for its folder to frontend/.oxlintrc.json, copying the capture or guided-capture block."
               },
               {
                 "group": [
@@ -274,40 +274,6 @@
     },
     {
       "files": [
-        "src/features/monitor/**"
-      ],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "regex": "^\\.\\.?(/|$)",
-                "message": "Use the @/ alias inside src, never a relative path."
-              },
-              {
-                "group": [
-                  "@/features/*/**",
-                  "!@/features/monitor/**"
-                ],
-                "message": "Reach another feature only through its index, e.g. @/features/capture."
-              },
-              {
-                "group": [
-                  "@/app",
-                  "@/app.*",
-                  "@/main",
-                  "@/main.*"
-                ],
-                "message": "The app and the entry are the top layer, so nothing below them imports @/app or @/main. Move the shared code into @/lib or @/components and import it from there."
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "files": [
         "src/features/guided-capture/**"
       ],
       "rules": {
@@ -324,7 +290,7 @@
                   "@/features/*/**",
                   "!@/features/guided-capture/**"
                 ],
-                "message": "Reach another feature only through its index, e.g. @/features/monitor or @/features/capture."
+                "message": "Reach another feature only through its index, e.g. @/features/capture."
               },
               {
                 "group": [
@@ -357,7 +323,7 @@
                 "group": [
                   "@/features/*/**"
                 ],
-                "message": "The app reaches a feature only through its index, e.g. @/features/monitor."
+                "message": "The app reaches a feature only through its index, e.g. @/features/guided-capture."
               }
             ]
           }
