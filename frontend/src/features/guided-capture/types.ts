@@ -1,5 +1,5 @@
 import type { AppError } from "@/lib/errors"
-import type { BpmMessage, FrameMessage, PulseSample, ServerMessage } from "@/lib/socket/messages"
+import type { BpmMessage, FrameMessage, HrvMessage, PulseSample, ServerMessage } from "@/lib/socket/messages"
 import type { LinkStatus } from "@/lib/socket/stream-client"
 
 export type Phase = "idle" | "starting" | "running"
@@ -13,6 +13,7 @@ export type MonitorState = {
   latestT: number | null
   reading: BpmMessage | null
   acquiringSince: number | null
+  variation: HrvMessage | null
   samples: readonly PulseSample[]
   error: AppError | null
   notice: Notice | null
@@ -32,20 +33,17 @@ export type RunStatus = "idle" | "starting" | "running" | "done" | "stopped"
 
 export type Stage = "get-comfy" | "warm-up" | "counted" | "result"
 
-export type RunResult = { kind: "reading"; bpm: number } | { kind: "none"; why: AppError }
+export type VariationKind = "beat-to-beat" | "overall"
 
-export type WindowTotals = {
-  okMs: number
-  bpmMs: number
-  noFaceMs: number
-}
+export type RunResult =
+  | { kind: "reading"; bpm: number; beatToBeatMs: number | null; overallMs: number | null }
+  | { kind: "none"; why: AppError }
 
 export type GuidedState = {
   monitor: MonitorState
   status: RunStatus
   startedAt: number | null
   now: number
-  totals: WindowTotals
   result: RunResult | null
   lastGoodBpm: number | null
   haltError: AppError | null

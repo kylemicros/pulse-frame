@@ -39,6 +39,10 @@ HALF_RATE_IBI_MS = 2.0 * 60_000.0 / TRUE_BPM
 RAMP_SWING_MS = 20.0
 RAMP_SPAN_MS = 120_000.0
 STRONG_CHECK_DB = 10.0
+BETWEEN_FLOORS_DB = 1.5
+BETWEEN_FLOORS_IBI_MS = 1_000.0
+BETWEEN_FLOORS_BEATS = 70
+BETWEEN_FLOORS_END_MS = 400_000.0
 
 
 def noisy(noise_sd: float, duration_s: float) -> Recording:
@@ -140,3 +144,18 @@ def ramped(ibi_ms: float, end_ms: float) -> tuple[list[Interval], list[WindowChe
     check_count = int(RAMP_SPAN_MS // CHECK_STEP_MS) + 1
     checks = hand_checks([STRONG_CHECK_DB] * check_count, end_ms - RAMP_SPAN_MS)
     return chain(ibis.tolist(), end_ms), checks
+
+
+def heart_rate_under_the_reading_floor() -> tuple[
+    list[Interval], list[WindowCheck], float
+]:
+    ibis = np.linspace(
+        BETWEEN_FLOORS_IBI_MS - RAMP_SWING_MS,
+        BETWEEN_FLOORS_IBI_MS + RAMP_SWING_MS,
+        BETWEEN_FLOORS_BEATS,
+    )
+    intervals = chain(ibis.tolist(), BETWEEN_FLOORS_END_MS)
+    first_ms = intervals[0].start_ms
+    count = int((BETWEEN_FLOORS_END_MS - first_ms) // CHECK_STEP_MS) + 1
+    checks = hand_checks([BETWEEN_FLOORS_DB] * count, first_ms)
+    return intervals, checks, checks[-1].t_ms

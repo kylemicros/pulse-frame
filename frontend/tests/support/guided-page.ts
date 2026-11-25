@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test';
-import type { MockBackend, PatchName } from './mock-backend';
+import type { Hrv, MockBackend, PatchName } from './mock-backend';
 import { pageNow } from './page-helpers';
 import { firstMessageAfter, socketRecords } from './socket-recorder';
 
@@ -16,7 +16,9 @@ export const RUN_MS = WARM_UP_MS + COUNTED_MS;
 
 const DISCLAIMER =
   'For wellness and curiosity only. pulse-frame is not a medical device, and its numbers are estimates.';
-const VARIATION_LATER = 'Both variation numbers fill in with a later update.';
+export const VARIATION_LINE =
+  'Both show how much the gap between your beats shifts, in ms (thousandths of a second). Compare them only with your own runs.';
+export const OLD_VARIATION_LATER = 'Both variation numbers fill in with a later update.';
 
 export function guidedPage(page: Page) {
   const main = page.getByRole('main');
@@ -47,7 +49,7 @@ export function guidedPage(page: Page) {
     pulseTrace: main.getByRole('img', { name: /^Pulse trace/ }),
     milestones: main.getByTestId('milestone-status'),
     notEnoughBeats: main.getByText('Not enough beats yet', { exact: true }),
-    variationLater: main.getByText(VARIATION_LATER, { exact: true }),
+    variationLine: main.getByText(VARIATION_LINE, { exact: true }),
     disclaimer: main.getByText(DISCLAIMER, { exact: true }),
     alert: main.getByRole('alert'),
   };
@@ -145,6 +147,37 @@ export async function pushAndConfirm(page: Page, backend: MockBackend, reading: 
       ),
     )
     .not.toBeNull();
+}
+
+export async function setHrvAndConfirm(page: Page, backend: MockBackend, fields: Hrv): Promise<void> {
+  const since = await pageNow(page);
+  backend.setHrv(fields);
+  const wanted = Object.entries(fields);
+  await expect
+    .poll(async () =>
+      firstMessageAfter(
+        await socketRecords(page),
+        since,
+        (message) => message.type === 'hrv' && wanted.every(([key, value]) => message[key] === value),
+      ),
+    )
+    .not.toBeNull();
+}
+
+export type TermLabel = 'Beat to beat variation' | 'Overall rhythm variation' | 'Heart rate';
+
+export function termLines(scope: Locator, label: TermLabel): Promise<string[]> {
+  return scope.evaluate((root, term) => {
+    const found = Array.from(root.querySelectorAll('dt')).filter((element) => element.textContent?.trim() === term);
+    if (found.length !== 1) {
+      return [`${found.length} terms named ${term}`];
+    }
+    const lines: string[] = [];
+    for (let node = found[0].nextElementSibling; node !== null && node.tagName === 'DD'; node = node.nextElementSibling) {
+      lines.push((node as HTMLElement).innerText.replaceAll(/\s+/g, ' ').trim());
+    }
+    return lines;
+  }, label);
 }
 
 export async function expectCurrentStep(page: Page, current: StepName): Promise<void> {

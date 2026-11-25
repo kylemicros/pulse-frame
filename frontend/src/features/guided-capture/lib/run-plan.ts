@@ -1,12 +1,11 @@
-import { RUN_STOPPED_TEXT } from "@/features/guided-capture/lib/run-copy"
+import { RUN_STOPPED_TEXT, VARIATION_LABEL } from "@/features/guided-capture/lib/run-copy"
 import type { GuidedState, RunResult, Stage } from "@/features/guided-capture/types"
 
 export const WARM_UP_MS = 60000
 export const COUNTED_MS = 90000
 export const RUN_MS = WARM_UP_MS + COUNTED_MS
-export const RESULT_WINDOW_MS = 60000
 export const TICK_MS = 250
-export const FRESH_READING_MS = 2500
+export const RESULT_FRESH_MS = 10000
 
 const MILESTONES: readonly { at: number; text: string }[] = [
   { at: 0, text: "Warm-up started. Stay in frame, no need to watch." },
@@ -40,7 +39,17 @@ export function percentDone(elapsed: number, from: number, length: number): numb
 }
 
 function resultText(result: RunResult): string {
-  return result.kind === "reading" ? `Done. Heart rate ${result.bpm} beats per minute.` : "Done. No reading this time."
+  if (result.kind === "none") {
+    return "Done. No reading this time."
+  }
+  const parts = [`Done. Heart rate ${result.bpm} beats per minute.`]
+  if (result.beatToBeatMs !== null) {
+    parts.push(`${VARIATION_LABEL["beat-to-beat"]} ${result.beatToBeatMs} milliseconds.`)
+  }
+  if (result.overallMs !== null) {
+    parts.push(`${VARIATION_LABEL.overall} ${result.overallMs} milliseconds.`)
+  }
+  return parts.join(" ")
 }
 
 export function milestoneText(state: GuidedState): string {

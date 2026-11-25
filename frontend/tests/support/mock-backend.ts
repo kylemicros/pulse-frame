@@ -13,6 +13,19 @@ type Reading = { bpm: number | null; quality_db: number | null; state: ReadingSt
 type Sample = [number, number];
 type WireError = { code: string; message: string; action: string };
 type ServerClose = { code: number; reason?: string };
+export type NoReadingCode = 'SIGNAL_TOO_WEAK' | 'READING_FLOOR_NOT_CLEARED';
+export type NoReadingWhy = 'face_left_view' | 'faint_pulse';
+export type Hrv = {
+  rmssd_ms: number | null;
+  sdnn_ms: number | null;
+  minute_bpm: number | null;
+  minute_count: number;
+  bpm_low: number | null;
+  bpm_high: number | null;
+  no_reading: NoReadingCode | null;
+  why: NoReadingWhy | null;
+  clear_percent: number | null;
+};
 
 type Connection = {
   id: number;
@@ -91,7 +104,8 @@ export const WIRE_ERRORS = {
   FRAME_TOO_LARGE: {
     code: 'FRAME_TOO_LARGE',
     message: 'The frame was larger than the 200 KiB limit.',
-    action: 'Send JPEG frames at 640 x 480 and quality 0.8 or lower.',
+    action:
+      'Send JPEG frames at 640 x 480; the page lowers the quality on its own when a frame is over the limit. If this keeps happening, light the room more evenly or sit in front of a plainer background.',
   },
   RATE_LIMITED: {
     code: 'RATE_LIMITED',
@@ -109,8 +123,25 @@ export function pulseSamples(count: number, endMs = 20000): Sample[] {
   });
 }
 
+export const NO_HRV_YET: Hrv = {
+  rmssd_ms: null,
+  sdnn_ms: null,
+  minute_bpm: null,
+  minute_count: 0,
+  bpm_low: null,
+  bpm_high: null,
+  no_reading: null,
+  why: null,
+  clear_percent: null,
+};
+
+export function hrv(overrides: Partial<Hrv> = {}): Hrv {
+  return { ...NO_HRV_YET, ...overrides };
+}
+
 const ACQUIRING: Reading = { bpm: null, quality_db: null, state: 'acquiring' };
 const READING_EVERY_MS = 1000;
+const HRV_EVERY_MS = 1000;
 const REFUSED_BEFORE_OPEN = 1006;
 
 type SentError = { code: string; framesBefore: number };
@@ -123,6 +154,8 @@ type Stream = {
   connection: Connection;
   awaitingReply: boolean;
   lastReadingT: number | null;
+  lastHrvT: number | null;
+  sentHrv: Hrv | null;
   staleReply: string | null;
 };
 
@@ -136,6 +169,7 @@ export class MockBackend {
   private scene: Scene = faceScene();
   private flash: Scene | null = null;
   private pendingReading: { reading: Reading; samples: Sample[] } | null = null;
+  private currentHrv: Hrv | null = null;
   private pendingError: { error: WireError; holdAfter: boolean } | null = null;
   private pendingUnreadable: { text: string; holdAfter: boolean } | null = null;
   private held = false;
@@ -172,12 +206,20 @@ export class MockBackend {
     this.pendingReading = { reading, samples };
   }
 
+  setHrv(fields: Hrv): void {
+    this.currentHrv = fields;
+  }
+
   replyNextWithError(error: WireError, options: { holdAfter: boolean } = { holdAfter: false }): void {
     this.pendingError = { error, holdAfter: options.holdAfter };
   }
 
   sendUnreadableNext(text: string, options: { holdAfter: boolean } = { holdAfter: false }): void {
     this.pendingUnreadable = { text, holdAfter: options.holdAfter };
+  }
+
+  sendLastBeforeHold(text: string): void {
+    this.pendingUnreadable = { text, holdAfter: true };
   }
 
   duplicateNextReply(timing: DuplicateTiming): void {
@@ -243,7 +285,14 @@ export class MockBackend {
     }
     connection.accepted = true;
     this.routes.set(connection.id, ws);
-    const stream: Stream = { connection, awaitingReply: false, lastReadingT: null, staleReply: null };
+    const stream: Stream = {
+      connection,
+      awaitingReply: false,
+      lastReadingT: null,
+      lastHrvT: null,
+      sentHrv: null,
+      staleReply: null,
+    };
     ws.onMessage((message) => {
       if (typeof message === 'string') {
         this.textMessages.push(message);
@@ -307,6 +356,7 @@ export class MockBackend {
       this.sendReading(ws, t, reading, samples);
       stream.lastReadingT = t;
     }
+    this.hrvTurn(ws, stream, t);
     const scene = this.flash ?? this.scene;
     if (this.flash !== null) {
       this.flash = null;
@@ -327,6 +377,22 @@ export class MockBackend {
   private sendDuplicate(ws: WebSocketRoute, reply: string, timing: DuplicateTiming): void {
     this.sentDuplicates.push({ timing, framesBefore: this.frames.length, at: performance.now() });
     ws.send(reply);
+  }
+
+  private hrvTurn(ws: WebSocketRoute, stream: Stream, t: number): void {
+    const fields = this.currentHrv;
+    if (fields === null) {
+      return;
+    }
+    const changed = stream.sentHrv !== fields;
+    const due = stream.lastHrvT === null || t - stream.lastHrvT >= HRV_EVERY_MS;
+    if (!changed && !due) {
+      return;
+    }
+    const message = { type: 'hrv', t, ...fields };
+    ws.send(JSON.stringify(message));
+    stream.sentHrv = fields;
+    stream.lastHrvT = t;
   }
 
   private sendReading(ws: WebSocketRoute, t: number, reading: Reading, samples: Sample[]): void {

@@ -1,13 +1,26 @@
+import math
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from pulse_frame.monitor.processor import FrameProcessor
 from pulse_frame.signal.live import LiveHrv
-from pulse_frame.signal.summary import NoReading, Summary, summarise
+from pulse_frame.signal.summary import (
+    NoReading,
+    Summary,
+    decide_no_reading,
+    summarise,
+)
 from pulse_frame.stream.app import process_frame
 from pulse_frame.stream.replies import encoded, hrv_message
-from tests.counted_runs import HALF_RATE_IBI_MS, WARMED_UP_RUNS, frames_of, ramped
+from tests.counted_runs import (
+    HALF_RATE_IBI_MS,
+    WARMED_UP_RUNS,
+    frames_of,
+    heart_rate_under_the_reading_floor,
+    ramped,
+)
 from tests.stream.wire import Message, has_places, strict_json
 
 CAPTURE_MS = 123_456
@@ -31,6 +44,15 @@ RMSSD_MS = 41.62
 SDNN_MS = 34.68
 MINUTE_COUNT = 68
 TINY_SHARE = 100.0 / 2_501
+TINY_SPAN_SHARE = 100.0 / 36_001
+UNDER_HALF_SHARE = 100.0 * 49 / 1_999
+NON_FINITE = [
+    pytest.param(math.nan, id="nan"),
+    pytest.param(math.inf, id="inf"),
+    pytest.param(-math.inf, id="minus_inf"),
+]
+DECISION_FIELDS = ("no_reading", "why", "clear_percent")
+WIRE_NAMES = {"rmssd_ms": "rmssd_ms", "sdnn_ms": "sdnn_ms", "bpm": "minute_bpm"}
 FRAME_MS = 1_000
 NEWEST_MS = 400_000.0
 READING = Summary(
@@ -120,15 +142,74 @@ def test_an_hrv_reply_carries_the_no_reading_decision_as_codes_only(
     assert message["clear_percent"] == decision.clear_percent
 
 
-def test_a_clear_share_under_one_percent_reaches_the_page_above_zero() -> None:
+@pytest.mark.parametrize("share", [TINY_SHARE, TINY_SPAN_SHARE, UNDER_HALF_SHARE])
+def test_a_clear_share_reaches_the_page_unrounded_so_its_whole_number_holds(
+    share: float,
+) -> None:
     decision = NoReading(
-        code="READING_FLOOR_NOT_CLEARED", why="faint_pulse", clear_percent=TINY_SHARE
+        code="READING_FLOOR_NOT_CLEARED", why="faint_pulse", clear_percent=share
     )
 
     message = assert_contract(hrv_message(CAPTURE_MS, NOTHING, decision))
 
-    assert message["clear_percent"] == TINY_SHARE
-    assert 0.0 < message["clear_percent"] < 1.0
+    assert message["clear_percent"] == share
+    assert message["clear_percent"] > 0.0
+
+
+@pytest.mark.parametrize("bad", NON_FINITE)
+@pytest.mark.parametrize("field", ["rmssd_ms", "sdnn_ms", "bpm"])
+def test_a_non_finite_reading_value_reaches_the_page_as_null(
+    field: str, bad: float
+) -> None:
+    summary = replace(READING, **{field: bad})
+
+    message = hrv_message(CAPTURE_MS, summary, None)
+
+    sent = WIRE_NAMES[field]
+    assert message[sent] is None, message
+    kept = {name: message[name] for name in WIRE_NAMES.values() if name != sent}
+    assert all(value is not None for value in kept.values()), kept
+    assert_contract(message)
+
+
+@pytest.mark.parametrize("bad", NON_FINITE)
+def test_a_faint_pulse_without_a_finite_share_sends_no_decision_at_all(
+    bad: float,
+) -> None:
+    decision = NoReading(
+        code="READING_FLOOR_NOT_CLEARED", why="faint_pulse", clear_percent=bad
+    )
+
+    message = hrv_message(CAPTURE_MS, NOTHING, decision)
+
+    assert [message[name] for name in DECISION_FIELDS] == [None, None, None], message
+    assert_contract(message)
+
+
+def test_a_minute_bpm_without_variation_sends_no_no_reading_decision() -> None:
+    intervals, checks, newest_ms = heart_rate_under_the_reading_floor()
+    result = summarise(intervals, newest_ms, checks)
+
+    message = assert_contract(
+        hrv_message(
+            CAPTURE_MS, result, decide_no_reading(result, checks, newest_ms, False)
+        )
+    )
+
+    assert result.bpm is not None
+    assert message == {
+        "type": "hrv",
+        "t": CAPTURE_MS,
+        "rmssd_ms": None,
+        "sdnn_ms": None,
+        "minute_bpm": round(result.bpm, 1),
+        "minute_count": result.count,
+        "bpm_low": None,
+        "bpm_high": None,
+        "no_reading": None,
+        "why": None,
+        "clear_percent": None,
+    }
 
 
 def test_a_too_weak_live_run_builds_an_hrv_reply_with_its_code() -> None:

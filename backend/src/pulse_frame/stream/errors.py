@@ -80,7 +80,9 @@ WIRE_ERRORS: Mapping[WireCode, WireError] = MappingProxyType(
         ),
         "FRAME_TOO_LARGE": WireError(
             "The frame was larger than the 200 KiB limit.",
-            "Send JPEG frames at 640 x 480 and quality 0.8 or lower.",
+            "Send JPEG frames at 640 x 480; the page lowers the quality on its own"
+            " when a frame is over the limit. If this keeps happening, light the"
+            " room more evenly or sit in front of a plainer background.",
         ),
         "RATE_LIMITED": WireError(
             "The frame came too soon: 30 frames were already taken in the last"

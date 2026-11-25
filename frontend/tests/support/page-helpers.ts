@@ -82,6 +82,62 @@ export function releaseCamera(page: Page): Promise<void> {
   return page.evaluate(() => (globalThis as unknown as HeldCameraWindow).releaseCamera());
 }
 
+export type CameraView = 'plain' | 'busy';
+
+type ViewWindow = Window & { cameraView: { current: CameraView } };
+
+export async function useDrawnCamera(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const view: { current: CameraView } = { current: 'plain' };
+    Object.defineProperty(globalThis, 'cameraView', { value: view });
+    const width = 640;
+    const height = 480;
+    const paintings = new Map<CameraView, ImageData>();
+    const paint = (kind: CameraView): ImageData => {
+      const image = new ImageData(width, height);
+      let seed = 7;
+      const random = () => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed / 0x7fffffff;
+      };
+      const noise = kind === 'busy' ? 80 : 0;
+      for (let index = 0; index < image.data.length; index += 4) {
+        const base = 128 + 60 * Math.sin(index / 4000);
+        image.data[index] = base + (random() - 0.5) * noise;
+        image.data[index + 1] = base + (random() - 0.5) * noise;
+        image.data[index + 2] = base + (random() - 0.5) * noise;
+        image.data[index + 3] = 255;
+      }
+      return image;
+    };
+    paintings.set('plain', paint('plain'));
+    paintings.set('busy', paint('busy'));
+    navigator.mediaDevices.getUserMedia = async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (context === null) {
+        throw new Error('The drawn camera got no 2D context');
+      }
+      const draw = () => context.putImageData(paintings.get(view.current) ?? paint('plain'), 0, 0);
+      draw();
+      const timer = setInterval(draw, 100);
+      const stream = canvas.captureStream(30);
+      for (const track of stream.getTracks()) {
+        track.addEventListener('ended', () => clearInterval(timer));
+      }
+      return stream;
+    };
+  });
+}
+
+export function showCameraView(page: Page, kind: CameraView): Promise<void> {
+  return page.evaluate((next) => {
+    (globalThis as unknown as ViewWindow).cameraView.current = next;
+  }, kind);
+}
+
 type RejectionWindow = Window & { unhandledRejections: string[] };
 
 export async function recordUnhandledRejections(page: Page): Promise<void> {
@@ -109,6 +165,16 @@ export function failFrameEncoding(page: Page, failure: EncodingFailure): Promise
       globalThis.setTimeout(() => callback(null), 0);
     };
   }, failure);
+}
+
+export function encodeEveryFrameOverCap(page: Page, bytes: number): Promise<void> {
+  return page.evaluate((size) => {
+    HTMLCanvasElement.prototype.toBlob = function oversizeToBlob(callback: BlobCallback) {
+      const body = new Uint8Array(size);
+      body.set([0xff, 0xd8, 0xff, 0xd9]);
+      globalThis.setTimeout(() => callback(new Blob([body], { type: 'image/jpeg' })), 0);
+    };
+  }, bytes);
 }
 
 export async function failPreviewAttach(page: Page): Promise<void> {

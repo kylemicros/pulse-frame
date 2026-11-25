@@ -1,62 +1,42 @@
 import { initialMonitorState, monitorReducer } from "@/features/guided-capture/lib/monitor-reducer"
-import { NO_READING_FACE, NO_READING_PULSE } from "@/features/guided-capture/lib/run-copy"
-import { FRESH_READING_MS, RESULT_WINDOW_MS, RUN_MS } from "@/features/guided-capture/lib/run-plan"
-import type { GuidedAction, GuidedState, MonitorState, RunResult, WindowTotals } from "@/features/guided-capture/types"
-
-const EMPTY_TOTALS: WindowTotals = { okMs: 0, bpmMs: 0, noFaceMs: 0 }
+import { noReadingReason } from "@/features/guided-capture/lib/run-copy"
+import { RESULT_FRESH_MS, RUN_MS } from "@/features/guided-capture/lib/run-plan"
+import type { GuidedAction, GuidedState, MonitorState, RunResult } from "@/features/guided-capture/types"
 
 export const initialGuidedState: GuidedState = {
   monitor: initialMonitorState,
   status: "idle",
   startedAt: null,
   now: 0,
-  totals: EMPTY_TOTALS,
   result: null,
   lastGoodBpm: null,
   haltError: null,
   endError: null,
 }
 
-function freshBpm(monitor: MonitorState, at: number): number | null {
-  const { reading } = monitor
-  if (reading?.state !== "ok" || reading.bpm === null) {
-    return null
+function runResult(monitor: MonitorState, end: number): RunResult {
+  const { variation } = monitor
+  const last = monitor.link === "live" && variation !== null && end - variation.t <= RESULT_FRESH_MS ? variation : null
+  if (last === null || last.minute_bpm === null) {
+    return { kind: "none", why: noReadingReason(last) }
   }
-  return at - reading.t <= FRESH_READING_MS ? reading.bpm : null
-}
-
-function addSpan(totals: WindowTotals, monitor: MonitorState, spanMs: number, at: number): WindowTotals {
-  if (spanMs <= 0 || monitor.link !== "live") {
-    return totals
-  }
-  const bpm = freshBpm(monitor, at)
-  const { scene } = monitor
   return {
-    okMs: totals.okMs + (bpm === null ? 0 : spanMs),
-    bpmMs: totals.bpmMs + (bpm === null ? 0 : bpm * spanMs),
-    noFaceMs: totals.noFaceMs + (scene !== null && !scene.face ? spanMs : 0),
+    kind: "reading",
+    bpm: Math.round(last.minute_bpm),
+    beatToBeatMs: last.rmssd_ms === null ? null : Math.round(last.rmssd_ms),
+    overallMs: last.sdnn_ms === null ? null : Math.round(last.sdnn_ms),
   }
-}
-
-function runResult(totals: WindowTotals): RunResult {
-  if (totals.okMs > 0) {
-    return { kind: "reading", bpm: Math.round(totals.bpmMs / totals.okMs) }
-  }
-  return { kind: "none", why: totals.noFaceMs * 2 >= RESULT_WINDOW_MS ? NO_READING_FACE : NO_READING_PULSE }
 }
 
 function tick(state: GuidedState, at: number): GuidedState {
   if (state.status !== "running" || state.startedAt === null) {
     return state
   }
-  const windowStart = state.startedAt + RUN_MS - RESULT_WINDOW_MS
-  const windowEnd = state.startedAt + RUN_MS
-  const span = Math.min(at, windowEnd) - Math.max(state.now, windowStart)
-  const totals = addSpan(state.totals, state.monitor, span, Math.min(at, windowEnd))
-  if (at - state.startedAt >= RUN_MS) {
-    return { ...state, now: at, totals, status: "done", result: runResult(totals) }
+  const end = state.startedAt + RUN_MS
+  if (at >= end) {
+    return { ...state, now: at, status: "done", result: runResult(state.monitor, end) }
   }
-  return { ...state, now: at, totals }
+  return { ...state, now: at }
 }
 
 function applySession(state: GuidedState, action: Extract<GuidedAction, { type: "session" }>): GuidedState {

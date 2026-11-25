@@ -20,7 +20,7 @@ test.describe('guided run before Start', () => {
     await expect(guided.main.getByText('Beat to beat variation', { exact: true })).toBeVisible();
     await expect(guided.main.getByText('Overall rhythm variation', { exact: true })).toBeVisible();
     await expect(guided.notEnoughBeats).toHaveCount(2);
-    await expect(guided.variationLater).toBeVisible();
+    await expect(guided.variationLine).toBeVisible();
     await expect(guided.disclaimer).toBeVisible();
     await expect(guided.start).toBeVisible();
     await expect(guided.stop).toHaveCount(0);

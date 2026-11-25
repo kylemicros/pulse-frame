@@ -4,8 +4,16 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { build, preview, type PreviewServer } from 'vite';
-import { advanceRun, advanceRunUntil, guidedPage, pushAndConfirm, RUN_STOPPED_TEXT } from './support/guided-page';
-import { faceScene, MockBackend, STREAM_URL } from './support/mock-backend';
+import {
+  advanceRun,
+  advanceRunUntil,
+  guidedPage,
+  pushAndConfirm,
+  RUN_STOPPED_TEXT,
+  setHrvAndConfirm,
+  termLines,
+} from './support/guided-page';
+import { faceScene, hrv, MockBackend, STREAM_URL, type Hrv } from './support/mock-backend';
 import { longestPathCommands, refuseCamera, setTabHidden, videoIsPlaying } from './support/page-helpers';
 
 const FRONTEND_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -84,6 +92,17 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
 async function startGuidedRun(page: Page, session: Session): Promise<void> {
   await guidedPage(page).start.click();
   await expect.poll(() => session.backend.frames.length).toBeGreaterThan(1);
+}
+
+async function runToEnd(page: Page, session: Session, last: Hrv): Promise<void> {
+  const guided = guidedPage(page);
+  await startGuidedRun(page, session);
+  await pushAndConfirm(page, session.backend, { bpm: 68.2, quality_db: 9.4, state: 'ok' });
+  await advanceRunUntil(page, session.backend, guided.countedTimer);
+  await setHrvAndConfirm(page, session.backend, hrv({ rmssd_ms: 39.4, sdnn_ms: 45.2, minute_bpm: 68.4, minute_count: 66 }));
+  await advanceRun(page, session.backend, 60000);
+  await setHrvAndConfirm(page, session.backend, last);
+  await advanceRunUntil(page, session.backend, guided.startAgain);
 }
 
 async function guidedLinkLost(page: Page, session: Session, close: { code: number; reason?: string }): Promise<void> {
@@ -198,32 +217,114 @@ test.describe('guided page screenshots', () => {
     await capture(page, testInfo, name);
   }
 
-  async function guidedDone(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  async function guidedCountingVariation(
+    page: Page,
+    testInfo: TestInfo,
+    name: string,
+    fields: Hrv,
+    shown: { beatToBeat: string; overall: string },
+  ): Promise<void> {
     const session = await openBuiltGuidedRun(page);
     const guided = guidedPage(page);
     await startGuidedRun(page, session);
-    await pushAndConfirm(page, session.backend, { bpm: 68.2, quality_db: 9.4, state: 'ok' });
-    await advanceRun(page, session.backend, 100000);
-    await pushAndConfirm(page, session.backend, { bpm: 67.8, quality_db: 9.4, state: 'ok' });
+    await advanceRunUntil(page, session.backend, guided.countedTimer);
+    await pushAndConfirm(page, session.backend, { bpm: 66.2, quality_db: 6.1, state: 'ok' });
 
-    await advanceRunUntil(page, session.backend, guided.startAgain);
+    await setHrvAndConfirm(page, session.backend, fields);
+    await advanceRun(page, session.backend, 2000, 500);
 
-    await expect(guided.headline('Done. Nice sitting.')).toBeVisible();
+    await expect.poll(() => termLines(guided.liveReadings, 'Beat to beat variation')).toEqual([
+      expect.stringMatching(new RegExp(`^${shown.beatToBeat}`)),
+      'Counted part so far',
+    ]);
+    await expect.poll(() => termLines(guided.liveReadings, 'Overall rhythm variation')).toEqual([
+      expect.stringMatching(new RegExp(`^${shown.overall}`)),
+      'Newest counted minute',
+    ]);
+    await expect(guided.variationLine).toBeVisible();
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
   }
 
-  async function guidedNoReading(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  function guidedOneVariation(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return guidedCountingVariation(page, testInfo, name, hrv({ rmssd_ms: 38.2, minute_count: 20 }), {
+      beatToBeat: '38',
+      overall: 'Not enough beats yet',
+    });
+  }
+
+  function guidedBothVariations(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return guidedCountingVariation(
+      page,
+      testInfo,
+      name,
+      hrv({ rmssd_ms: 39.4, sdnn_ms: 45.2, minute_bpm: 66.4, minute_count: 66 }),
+      { beatToBeat: '39', overall: '45' },
+    );
+  }
+
+  async function guidedDone(page: Page, testInfo: TestInfo, name: string): Promise<void> {
     const session = await openBuiltGuidedRun(page);
     const guided = guidedPage(page);
-    await startGuidedRun(page, session);
 
-    await advanceRunUntil(page, session.backend, guided.startAgain);
+    await runToEnd(page, session, hrv({ rmssd_ms: 41.2, sdnn_ms: 46.7, minute_bpm: 67.8, minute_count: 72 }));
 
-    await expect(guided.headline('Done, but no reading this time.')).toBeVisible();
-    await expect(guided.main.getByText('Ref: NO_READING', { exact: true })).toBeVisible();
+    await expect(guided.headline('Done. Nice sitting.')).toBeVisible();
+    await expect(guided.main.getByRole('definition').filter({ hasText: 'BPM' })).toHaveText(/^\s*68\s*BPM\s*$/);
+    await expect(guided.variationLine).toBeVisible();
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
+  }
+
+  async function guidedNoReadingWith(
+    page: Page,
+    testInfo: TestInfo,
+    name: string,
+    last: Hrv | null,
+    code: string,
+  ): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    if (last === null) {
+      await startGuidedRun(page, session);
+      await advanceRunUntil(page, session.backend, guided.startAgain);
+    } else {
+      await runToEnd(page, session, last);
+    }
+
+    await expect(guided.headline('Done, but no reading this time.')).toBeVisible();
+    await expect(guided.main.getByText(`Ref: ${code}`, { exact: true })).toBeVisible();
+    await expect(guided.main.getByText('Not enough beats this time', { exact: true })).toHaveCount(2);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  function guidedNoReading(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return guidedNoReadingWith(page, testInfo, name, null, 'NO_READING');
+  }
+
+  function guidedNoReadingFaint(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return guidedNoReadingWith(
+      page,
+      testInfo,
+      name,
+      hrv({ minute_count: 9, no_reading: 'READING_FLOOR_NOT_CLEARED', why: 'faint_pulse', clear_percent: 18.4 }),
+      'READING_FLOOR_NOT_CLEARED',
+    );
+  }
+
+  function guidedNoReadingFace(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return guidedNoReadingWith(
+      page,
+      testInfo,
+      name,
+      hrv({ minute_count: 14, no_reading: 'READING_FLOOR_NOT_CLEARED', why: 'face_left_view' }),
+      'READING_FLOOR_NOT_CLEARED',
+    );
+  }
+
+  function guidedNoReadingWeak(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return guidedNoReadingWith(page, testInfo, name, hrv({ no_reading: 'SIGNAL_TOO_WEAK' }), 'SIGNAL_TOO_WEAK');
   }
 
   async function guidedCameraDenied(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -314,8 +415,13 @@ test.describe('guided page screenshots', () => {
     { state: 'warm-up', title: 'the guided run warm-up with the skin outline on', shoot: guidedWarmUp },
     { state: 'outline-off', title: 'the guided run warm-up with the skin outline off', shoot: guidedOutlineOff },
     { state: 'counting', title: 'the guided run counting with the hold still hint', shoot: guidedCounting },
+    { state: 'one-variation', title: 'the guided run counting with one variation value in', shoot: guidedOneVariation },
+    { state: 'both-variations', title: 'the guided run counting with both variation values in', shoot: guidedBothVariations },
     { state: 'done', title: 'the guided run result', shoot: guidedDone },
-    { state: 'no-reading', title: 'the guided run with no reading', shoot: guidedNoReading },
+    { state: 'no-reading', title: 'the guided run with no reading and no reason', shoot: guidedNoReading },
+    { state: 'no-reading-faint', title: 'the guided run with no reading from a faint pulse', shoot: guidedNoReadingFaint },
+    { state: 'no-reading-face', title: 'the guided run with no reading as the face left view', shoot: guidedNoReadingFace },
+    { state: 'no-reading-weak', title: 'the guided run with no reading from a weak signal', shoot: guidedNoReadingWeak },
     { state: 'camera-denied', title: 'the guided run camera denied guidance', shoot: guidedCameraDenied },
     { state: 'last-good', title: 'the guided run holding the last good heart rate', shoot: guidedLastGood },
     { state: 'busy', title: 'the guided run stopped because the app is busy elsewhere', shoot: guidedBusy },
