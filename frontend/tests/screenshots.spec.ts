@@ -276,6 +276,25 @@ test.describe('guided page screenshots', () => {
     await capture(page, testInfo, name);
   }
 
+  async function guidedDoneRange(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+
+    await runToEnd(
+      page,
+      session,
+      hrv({ rmssd_ms: 41.2, sdnn_ms: 46.7, minute_bpm: 67.8, minute_count: 72, bpm_low: 66.4, bpm_high: 69.3 }),
+    );
+
+    await expect(guided.headline('Done. Nice sitting.')).toBeVisible();
+    await expect
+      .poll(() => termLines(guided.main, 'Heart rate'))
+      .toEqual([expect.stringMatching(/^68 ?BPM$/), 'Average over the last counted minute. Likely 66 to 70.']);
+    await expect(guided.variationLine).toBeVisible();
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
   async function guidedNoReadingWith(
     page: Page,
     testInfo: TestInfo,
@@ -418,6 +437,7 @@ test.describe('guided page screenshots', () => {
     { state: 'one-variation', title: 'the guided run counting with one variation value in', shoot: guidedOneVariation },
     { state: 'both-variations', title: 'the guided run counting with both variation values in', shoot: guidedBothVariations },
     { state: 'done', title: 'the guided run result', shoot: guidedDone },
+    { state: 'done-range', title: 'the guided run result with a likely range', shoot: guidedDoneRange },
     { state: 'no-reading', title: 'the guided run with no reading and no reason', shoot: guidedNoReading },
     { state: 'no-reading-faint', title: 'the guided run with no reading from a faint pulse', shoot: guidedNoReadingFaint },
     { state: 'no-reading-face', title: 'the guided run with no reading as the face left view', shoot: guidedNoReadingFace },

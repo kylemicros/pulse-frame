@@ -12,7 +12,7 @@ import {
   termLines,
 } from '../../support/guided-page';
 import { hrv, MockBackend, NO_FACE_SCENE, type Hrv } from '../../support/mock-backend';
-import { cameraTrackStates, spyOnCamera } from '../../support/page-helpers';
+import { cameraTrackStates, pageNow, spyOnCamera } from '../../support/page-helpers';
 
 const ok = (bpm: number) => ({ bpm, quality_db: 9.2, state: 'ok' }) as const;
 
@@ -22,6 +22,14 @@ const NOT_THIS_TIME = 'Not enough beats this time';
 const AVERAGE_LINE = 'Average over the last counted minute.';
 const LIGHT_ADVICE = 'Face a window so the light is even, hold still, then press Start again.';
 const EARLIER_VALUES = hrv({ rmssd_ms: 38.2, sdnn_ms: 44.1, minute_bpm: 71.2, minute_count: 50 });
+const EARLIER_RANGE = hrv({
+  rmssd_ms: 38.2,
+  sdnn_ms: 44.1,
+  minute_bpm: 71.2,
+  minute_count: 50,
+  bpm_low: 69.4,
+  bpm_high: 73.1,
+});
 const NO_READING_LINE =
   'Not enough steady beats came through in the last counted minute. Hold still with your shoulders loose, then press Start again.';
 
@@ -60,6 +68,27 @@ async function expectNoReadingDone(page: Page, lead: string, code: string): Prom
   await expect(guided.startAgain).toBeVisible();
   await expect(guided.milestones).toHaveText(/^Done\. No reading this time\.?$/);
 }
+
+const RANGE_CASES: Array<{ name: string; last: Hrv; bpm: number; likely: string }> = [
+  {
+    name: 'rounds the low end down and the high end up, so 66.6 to 69.2 reads 66 to 70',
+    last: hrv({ minute_bpm: 68.4, bpm_low: 66.6, bpm_high: 69.2 }),
+    bpm: 68,
+    likely: 'Likely 66 to 70.',
+  },
+  {
+    name: 'keeps the heart rate inside when it rounds up to the top of the range',
+    last: hrv({ minute_bpm: 69.5, bpm_low: 67.1, bpm_high: 69.5 }),
+    bpm: 70,
+    likely: 'Likely 67 to 70.',
+  },
+  {
+    name: 'keeps the heart rate inside when the low end rounds down below it and leaves a whole high end as it is',
+    last: hrv({ minute_bpm: 66.5, bpm_low: 66.5, bpm_high: 68 }),
+    bpm: 67,
+    likely: 'Likely 66 to 68.',
+  },
+];
 
 const NO_READING_CASES: Array<{ name: string; last: Hrv; lead: string; code: string }> = [
   {
@@ -218,6 +247,142 @@ test.describe('guided run result', () => {
     await expect.poll(() => backend.openConnections().length).toBe(1);
   });
 
+  for (const { name, last, bpm, likely } of RANGE_CASES) {
+    test(`adds the likely range to the heart rate line and the done status: ${name}`, async ({ page }) => {
+      await page.clock.install();
+      const backend = await MockBackend.attach(page);
+      const guided = guidedPage(page);
+
+      await runToEndWithLastMessage(page, backend, { ...last, rmssd_ms: 41.2, sdnn_ms: 46.5, minute_count: 72 });
+
+      await expect(guided.headline('Done. Nice sitting.')).toBeVisible();
+      await expect(guided.main.getByRole('definition').filter({ hasText: 'BPM' })).toHaveText(
+        new RegExp(`^\\s*${bpm}\\s*BPM\\s*$`),
+      );
+      await expect
+        .poll(() => termLines(guided.main, 'Heart rate'))
+        .toEqual([bpmLine(bpm), `${AVERAGE_LINE} ${likely}`]);
+      await expect(guided.main.getByText(/Likely/)).toHaveCount(1);
+      await expect.poll(() => termLines(guided.main, BEAT_TO_BEAT)).toEqual([ms(41), 'Over the whole counted part.']);
+      await expect.poll(() => termLines(guided.main, OVERALL)).toEqual([ms(47), 'Last counted minute.']);
+      await expect(guided.main.getByText(/^Ref: /)).toHaveCount(0);
+      await expect(guided.milestones).toHaveText(
+        `Done. Heart rate ${bpm} beats per minute, ${likely.replace('Likely', 'likely')} Beat to beat variation 41 milliseconds. Overall rhythm variation 47 milliseconds.`,
+      );
+    });
+  }
+
+  test('says the likely range in the done status before a single variation value', async ({ page }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+
+    await runToEndWithLastMessage(
+      page,
+      backend,
+      hrv({ rmssd_ms: 35.5, minute_bpm: 70.2, minute_count: 48, bpm_low: 68.9, bpm_high: 71.4 }),
+    );
+
+    await expect
+      .poll(() => termLines(guided.main, 'Heart rate'))
+      .toEqual([bpmLine(70), `${AVERAGE_LINE} Likely 68 to 72.`]);
+    await expect.poll(() => termLines(guided.main, OVERALL)).toEqual([NOT_THIS_TIME, 'Last counted minute.']);
+    await expect(guided.milestones).toHaveText(
+      'Done. Heart rate 70 beats per minute, likely 68 to 72. Beat to beat variation 36 milliseconds.',
+    );
+  });
+
+  test('leaves the heart rate line exactly as before when the last message has no range', async ({ page }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+
+    await runToEndWithLastMessage(page, backend, hrv({ minute_bpm: 68.4, minute_count: 72 }));
+    await expect(guided.headline('Done. Nice sitting.')).toBeVisible();
+
+    await expect.poll(() => termLines(guided.main, 'Heart rate')).toEqual([bpmLine(68), AVERAGE_LINE]);
+    await expect(guided.main).not.toContainText(/likely/i);
+    await expect(guided.milestones).toHaveText('Done. Heart rate 68 beats per minute.');
+  });
+
+  test('shows no likely range when both ends round to the same whole number', async ({ page }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+
+    await runToEndWithLastMessage(
+      page,
+      backend,
+      hrv({ rmssd_ms: 41.2, minute_bpm: 68, minute_count: 72, bpm_low: 68, bpm_high: 68 }),
+    );
+    await expect(guided.headline('Done. Nice sitting.')).toBeVisible();
+
+    await expect.poll(() => termLines(guided.main, 'Heart rate')).toEqual([bpmLine(68), AVERAGE_LINE]);
+    await expect(guided.main).not.toContainText(/likely/i);
+    await expect(guided.milestones).toHaveText('Done. Heart rate 68 beats per minute. Beat to beat variation 41 milliseconds.');
+  });
+
+  test('takes the range from the last message, not an earlier one, and drops it when the last has none', async ({
+    page,
+  }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
+    await advanceRunUntil(page, backend, guided.countedTimer);
+    await setHrvAndConfirm(page, backend, EARLIER_RANGE);
+    await advanceRun(page, backend, 60000);
+
+    await setHrvAndConfirm(page, backend, hrv({ minute_bpm: 70.4, minute_count: 70 }));
+    await advanceRunUntil(page, backend, guided.startAgain);
+
+    await expect.poll(() => termLines(guided.main, 'Heart rate')).toEqual([bpmLine(70), AVERAGE_LINE]);
+    await expect(guided.main).not.toContainText(/likely|\b73\b/i);
+    await expect(guided.milestones).toHaveText('Done. Heart rate 70 beats per minute.');
+  });
+
+  test('keeps the likely range off the live readings while counting, even when the message carries one', async ({
+    page,
+  }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
+    await advanceRunUntil(page, backend, guided.countedTimer);
+
+    await setHrvAndConfirm(page, backend, EARLIER_RANGE);
+    await advanceRun(page, backend, 3000, 500);
+
+    await expect(guided.headline('Counting. Hold still.')).toBeVisible();
+    await expect(guided.main).not.toContainText(/likely/i);
+  });
+
+  for (const { end, ends } of [
+    { end: 'low', ends: { bpm_low: 66.6, bpm_high: null } },
+    { end: 'high', ends: { bpm_low: null, bpm_high: 69.2 } },
+  ] as const) {
+    test(`never shows a likely range when the pulse reader sends only the ${end} end`, async ({ page }) => {
+      await page.clock.install();
+      const backend = await MockBackend.attach(page);
+      const guided = guidedPage(page);
+      await startRun(page, backend);
+      await advanceRunUntil(page, backend, guided.countedTimer);
+      await setHrvAndConfirm(page, backend, hrv({ minute_bpm: 68.4, minute_count: 50 }));
+      await advanceRun(page, backend, 50000);
+
+      const t = Math.floor(await pageNow(page));
+      const oneEnded = { type: 'hrv', t, ...hrv({ minute_bpm: 68.4, minute_count: 72, ...ends }) };
+      backend.sendUnreadableNext(JSON.stringify(oneEnded), { holdAfter: true });
+      await expect(guided.main.getByText('Ref: BAD_REPLY', { exact: true })).toBeVisible();
+      await expect(guided.main).not.toContainText(/likely/i);
+      backend.releaseReplies();
+      await advanceRunUntil(page, backend, guided.startAgain);
+
+      await expect(guided.main).not.toContainText(/likely/i);
+      await expect(guided.milestones).not.toContainText(/likely/i);
+    });
+  }
+
   for (const { name, last, lead, code } of NO_READING_CASES) {
     test(`ends with no reading and Ref: ${code} when ${name}`, async ({ page }) => {
       await page.clock.install();
@@ -229,6 +394,23 @@ test.describe('guided run result', () => {
       await expect(guidedPage(page).main).not.toContainText(/\b(80|71|38|44)\b/);
     });
   }
+
+  test('shows no likely range on a no reading result after an earlier message carried one', async ({ page }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
+    await advanceRunUntil(page, backend, guided.countedTimer);
+    await setHrvAndConfirm(page, backend, EARLIER_RANGE);
+    await advanceRun(page, backend, 60000);
+
+    await setHrvAndConfirm(page, backend, hrv({ no_reading: 'SIGNAL_TOO_WEAK' }));
+    await advanceRunUntil(page, backend, guided.startAgain);
+
+    await expectNoReadingDone(page, `Your pulse never showed clearly enough to count. ${LIGHT_ADVICE}`, 'SIGNAL_TOO_WEAK');
+    await expect(guided.main).not.toContainText(/likely/i);
+    await expect(guided.main).not.toContainText(/\b(69|71|73)\b/);
+  });
 
   test('ends with no reading and Ref: NO_READING when no hrv message came before the end', async ({ page }) => {
     await page.clock.install();
@@ -311,6 +493,26 @@ test.describe('guided run result', () => {
   });
 
   for (const { how, stall } of stalls) {
+    test(`ends with no reading and no likely range when the pulse reader ${how} after sending a range`, async ({
+      page,
+    }) => {
+      await page.clock.install();
+      const backend = await MockBackend.attach(page);
+      const guided = guidedPage(page);
+      await startRun(page, backend);
+      await advanceRunUntil(page, backend, guided.countedTimer);
+      await advanceRun(page, backend, 50000);
+      await setHrvAndConfirm(page, backend, EARLIER_RANGE);
+      await advanceRun(page, backend, 2000, 500);
+
+      stall(backend);
+      await advanceStalledRunUntil(page, guided.startAgain);
+
+      await expectNoReadingDone(page, NO_READING_LINE, 'NO_READING');
+      await expect(guided.main).not.toContainText(/likely/i);
+      await expect(guided.main).not.toContainText(/\b(69|73)\b/);
+    });
+
     test(`ends with no reading, never the frozen heart rate, when the pulse reader ${how}`, async ({ page }) => {
       await page.clock.install();
       const backend = await MockBackend.attach(page);

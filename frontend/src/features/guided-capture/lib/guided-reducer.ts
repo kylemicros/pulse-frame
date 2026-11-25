@@ -20,9 +20,12 @@ function runResult(monitor: MonitorState, end: number): RunResult {
   if (last === null || last.minute_bpm === null) {
     return { kind: "none", why: noReadingReason(last) }
   }
+  const low = last.bpm_low === null ? null : Math.floor(last.bpm_low)
+  const high = last.bpm_high === null ? null : Math.ceil(last.bpm_high)
   return {
     kind: "reading",
     bpm: Math.round(last.minute_bpm),
+    likely: low !== null && high !== null && low < high ? { low, high } : null,
     beatToBeatMs: last.rmssd_ms === null ? null : Math.round(last.rmssd_ms),
     overallMs: last.sdnn_ms === null ? null : Math.round(last.sdnn_ms),
   }

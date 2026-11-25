@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from pulse_frame.signal.beats import Interval
+from pulse_frame.signal.bpm_range import bpm_range, minute_bpm
 from pulse_frame.signal.hrv import (
     READING_FLOOR_DB,
     HrvReading,
@@ -21,7 +22,6 @@ from pulse_frame.signal.hrv import (
     newest_window,
     too_many_rejected,
 )
-from pulse_frame.signal.spectrum import SEARCH_LOW_HZ
 
 type NoReadingCode = Literal["SIGNAL_TOO_WEAK", "READING_FLOOR_NOT_CLEARED"]
 type NoReadingWhy = Literal["face_left_view", "faint_pulse"]
@@ -31,8 +31,6 @@ SUMMARY_SPAN_MS = 60_000.0
 SUMMARY_MIN_ACCEPTED_MS = 45_000.0
 MIN_MINUTE_INTERVALS = 2
 WEAK_WINDOW_SHARE = 0.5
-MS_PER_MINUTE = 60_000.0
-MIN_MINUTE_BPM = SEARCH_LOW_HZ * 60.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +41,8 @@ class Summary:
     count: int
     accepted_percent: float | None
     sdnn_minutes: tuple[int, ...] = ()
+    bpm_low: float | None = None
+    bpm_high: float | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +119,7 @@ def summarise(
         )
     reading = hrv_reading(intervals, newest_ms, window_checks)
     sdnns = {} if reading.sdnn_ms is None else minute_sdnns(intervals, newest_ms)
+    spread = bpm_range(accepted)
     return Summary(
         bpm=bpm,
         rmssd_ms=reading.rmssd_ms,
@@ -126,12 +127,9 @@ def summarise(
         count=int(accepted.size),
         accepted_percent=share,
         sdnn_minutes=tuple(sorted(sdnns)),
+        bpm_low=None if spread is None else spread.low,
+        bpm_high=None if spread is None else spread.high,
     )
-
-
-def minute_bpm(accepted_ibis_ms: NDArray[np.float64]) -> float | None:
-    bpm = float(MS_PER_MINUTE / accepted_ibis_ms.mean())
-    return None if bpm < MIN_MINUTE_BPM else bpm
 
 
 def counted_reading(

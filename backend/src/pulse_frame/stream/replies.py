@@ -72,6 +72,7 @@ def hrv_message(
     capture_ms: int, summary: Summary, no_reading: NoReading | None
 ) -> Message:
     decision = sendable(no_reading)
+    low, high = sendable_range(summary)
     return {
         "type": "hrv",
         "t": capture_ms,
@@ -79,12 +80,20 @@ def hrv_message(
         "sdnn_ms": rounded(finite(summary.sdnn_ms), HRV_PLACES),
         "minute_bpm": rounded(finite(summary.bpm), BPM_PLACES),
         "minute_count": summary.count,
-        "bpm_low": None,
-        "bpm_high": None,
+        "bpm_low": rounded(low, BPM_PLACES),
+        "bpm_high": rounded(high, BPM_PLACES),
         "no_reading": None if decision is None else decision.code,
         "why": None if decision is None else decision.why,
         "clear_percent": None if decision is None else decision.clear_percent,
     }
+
+
+def sendable_range(summary: Summary) -> tuple[float | None, float | None]:
+    low = finite(summary.bpm_low)
+    high = finite(summary.bpm_high)
+    if finite(summary.bpm) is None or low is None or high is None:
+        return None, None
+    return low, high
 
 
 def sendable(no_reading: NoReading | None) -> NoReading | None:

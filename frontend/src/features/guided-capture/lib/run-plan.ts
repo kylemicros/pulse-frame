@@ -42,7 +42,9 @@ function resultText(result: RunResult): string {
   if (result.kind === "none") {
     return "Done. No reading this time."
   }
-  const parts = [`Done. Heart rate ${result.bpm} beats per minute.`]
+  const { likely } = result
+  const range = likely === null ? "" : `, likely ${likely.low} to ${likely.high}`
+  const parts = [`Done. Heart rate ${result.bpm} beats per minute${range}.`]
   if (result.beatToBeatMs !== null) {
     parts.push(`${VARIATION_LABEL["beat-to-beat"]} ${result.beatToBeatMs} milliseconds.`)
   }
