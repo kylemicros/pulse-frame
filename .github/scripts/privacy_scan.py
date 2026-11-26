@@ -9,7 +9,12 @@ from pathlib import Path, PurePosixPath
 SIZE_LIMIT_BYTES = 100_000
 SIZE_EXEMPT = {"backend/uv.lock", "frontend/pnpm-lock.yaml"}
 PINNED_IMAGES = {
-    "backend/tests/fixtures/astronaut.jpg": "78831fd8952dbf1cf60e50d6749ac6af8fcd32f0056197b855df36404f889e48"
+    "backend/tests/fixtures/astronaut.jpg": "78831fd8952dbf1cf60e50d6749ac6af8fcd32f0056197b855df36404f889e48",
+    "frontend/public/apple-touch-icon.png": "e55688a09af940e35d60e66abbedbd899bd0f167465019851d78a02de5a6c163",
+    "frontend/public/favicon.ico": "df1a9fc946430914dc2e2485590e8326a8d3fbb3f2136b98cf1ab11bcdf472e7",
+    "frontend/public/icon-192.png": "db49e49d692db8f6f436b26fc6ed8113961be2520c72ccc2fa28b21b1fd6b0c8",
+    "frontend/public/icon-512.png": "0ca61627a4ce15ffd76c2380f3d07a6c1cfe4bcd1de4d5b8a78885bbc9d3aaea",
+    "frontend/public/icon-maskable-512.png": "b6b8f28d9aad84a19795ef7689fda42225192d161541270541a68c5e81fc9663",
 }
 DATA_SUFFIXES = {
     ".npz",
