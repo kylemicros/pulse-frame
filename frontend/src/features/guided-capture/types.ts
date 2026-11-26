@@ -1,3 +1,4 @@
+import type { SetupCheck, SetupSample } from "@/features/guided-capture/lib/setup-check"
 import type { AppError } from "@/lib/errors"
 import type { BpmMessage, FrameMessage, HrvMessage, PulseSample, ServerMessage } from "@/lib/socket/messages"
 import type { LinkStatus } from "@/lib/socket/stream-client"
@@ -26,10 +27,11 @@ export type SessionEvent =
   | { type: "message"; message: Exclude<ServerMessage, { type: "error" }> }
   | { type: "notice"; error: AppError }
   | { type: "unreadable" }
+  | { type: "setup-sample"; sample: SetupSample }
 
 export type MonitorAction = SessionEvent | { type: "start" } | { type: "notice-expired"; id: number }
 
-export type RunStatus = "idle" | "starting" | "running" | "done" | "stopped"
+export type RunStatus = "idle" | "starting" | "checking" | "running" | "done" | "stopped"
 
 export type Stage = "get-comfy" | "warm-up" | "counted" | "result"
 
@@ -51,6 +53,7 @@ export type GuidedState = {
   monitor: MonitorState
   status: RunStatus
   startedAt: number | null
+  check: SetupCheck | null
   now: number
   result: RunResult | null
   lastGoodBpm: number | null
@@ -63,4 +66,5 @@ export type GuidedAction =
   | { type: "session"; event: SessionEvent; at: number }
   | { type: "tick"; at: number }
   | { type: "halt"; error: AppError }
+  | { type: "start-anyway"; at: number }
   | { type: "notice-expired"; id: number }

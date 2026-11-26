@@ -4,17 +4,42 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { build, preview, type PreviewServer } from 'vite';
+import { SETUP_MIN_FACE_SPAN_PX } from '../src/features/guided-capture/lib/setup-check';
 import {
   advanceRun,
   advanceRunUntil,
+  FRAME_SPACING_MS,
   guidedPage,
+  paceReplies,
+  paceUntil,
+  passSetupCheck,
+  pauseClock,
   pushAndConfirm,
   RUN_STOPPED_TEXT,
+  SETUP_PROMPTS,
   setHrvAndConfirm,
+  SLOW_STEP_MS,
   termLines,
+  type SetupProblem,
 } from './support/guided-page';
-import { faceScene, hrv, MockBackend, STREAM_URL, type Hrv } from './support/mock-backend';
+import { installLitCamera, type Light } from './support/lit-camera';
+import {
+  faceScene,
+  faceWithSpan,
+  hrv,
+  MockBackend,
+  NO_FACE_SCENE,
+  STREAM_URL,
+  type Hrv,
+  type Scene,
+} from './support/mock-backend';
 import { longestPathCommands, refuseCamera, setTabHidden, videoIsPlaying } from './support/page-helpers';
+
+const CHECK_SETTLE_MS = 5000;
+const CHECK_SETTLED_MS = 1000;
+const START_ANYWAY_BUDGET_MS = 17000;
+
+type CheckState = { light: Light | null; scene: Scene; stepMs: number };
 
 const FRONTEND_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -89,9 +114,14 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
   });
 }
 
-async function startGuidedRun(page: Page, session: Session): Promise<void> {
+async function startCheckOnly(page: Page, session: Session): Promise<void> {
   await guidedPage(page).start.click();
   await expect.poll(() => session.backend.frames.length).toBeGreaterThan(1);
+}
+
+async function startGuidedRun(page: Page, session: Session): Promise<void> {
+  await startCheckOnly(page, session);
+  await passSetupCheck(page, session.backend);
 }
 
 async function runToEnd(page: Page, session: Session, last: Hrv): Promise<void> {
@@ -143,7 +173,10 @@ test.describe('guided page screenshots', () => {
     await expectOnlyFakeDevices(page);
   }
 
-  async function openBuiltGuidedRun(page: Page): Promise<Session> {
+  async function openBuiltGuidedRun(page: Page, light: Light | null = null): Promise<Session> {
+    if (light !== null) {
+      await installLitCamera(page, light);
+    }
     const session = await attachMockOnly(page);
     await page.clock.install();
     await openBuiltPage(page);
@@ -429,8 +462,96 @@ test.describe('guided page screenshots', () => {
     await capture(page, testInfo, name);
   }
 
+  async function openBuiltCheck(page: Page, check: CheckState): Promise<Session> {
+    const session = await openBuiltGuidedRun(page, check.light);
+    session.backend.setScene(check.scene);
+    await startCheckOnly(page, session);
+    await pauseClock(page);
+    return session;
+  }
+
+  function guidedCheckPrompt(problem: SetupProblem, change: Partial<CheckState>) {
+    const check: CheckState = { light: null, scene: faceScene(), stepMs: FRAME_SPACING_MS, ...change };
+    return async (page: Page, testInfo: TestInfo, name: string): Promise<void> => {
+      const session = await openBuiltCheck(page, check);
+      const guided = guidedPage(page);
+      const prompt = guided.setupPrompt.getByText(SETUP_PROMPTS[problem].prompt, { exact: true });
+
+      await paceUntil(page, session.backend, prompt, CHECK_SETTLE_MS, check.stepMs);
+      await paceReplies(page, session.backend, CHECK_SETTLED_MS, check.stepMs);
+
+      await expect(guided.headline('Quick setup check')).toBeVisible();
+      await expect(prompt).toBeVisible();
+      await expect(guided.setupCheck).toBeVisible();
+      await expect(guided.startAnywayWait).toBeVisible();
+      await expectOnlyMockedSockets(session);
+      await capture(page, testInfo, name);
+    };
+  }
+
+  async function guidedCheckStartAnyway(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltCheck(page, { light: 'behind', scene: faceScene(), stepMs: FRAME_SPACING_MS });
+    const guided = guidedPage(page);
+
+    await paceUntil(page, session.backend, guided.startAnyway, START_ANYWAY_BUDGET_MS);
+    await paceReplies(page, session.backend, CHECK_SETTLED_MS);
+
+    await expect(guided.startAnyway).toBeVisible();
+    await expect(guided.setupPrompt.getByText(SETUP_PROMPTS.behind.prompt, { exact: true })).toBeVisible();
+    await expect(guided.setupRow('Light').getByText('Not yet', { exact: true })).toBeVisible();
+    for (const row of ['Distance', 'Stillness', 'Camera speed'] as const) {
+      await expect(guided.setupRow(row).getByText('Good', { exact: true })).toBeVisible();
+    }
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedCheckAllGood(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltCheck(page, { light: 'even', scene: faceScene(), stepMs: FRAME_SPACING_MS });
+    const guided = guidedPage(page);
+
+    await paceUntil(page, session.backend, guided.headline('Looking good'), CHECK_SETTLE_MS);
+
+    await expect(guided.setupCheck).toBeVisible();
+    await expect(guided.warmUpTimer).toHaveCount(0);
+    await expect(guided.outlines).toHaveCount(3);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  const farFace = faceWithSpan(SETUP_MIN_FACE_SPAN_PX / 2);
+
   const GUIDED_STATES = [
     { state: 'idle', title: 'the guided run idle page', shoot: guidedIdle },
+    {
+      state: 'check-no-face',
+      title: 'the setup check with no face found',
+      shoot: guidedCheckPrompt('noFace', { scene: NO_FACE_SCENE }),
+    },
+    { state: 'check-far', title: 'the setup check with the face too far away', shoot: guidedCheckPrompt('far', { scene: farFace }) },
+    {
+      state: 'check-behind',
+      title: 'the setup check with light behind the face',
+      shoot: guidedCheckPrompt('behind', { light: 'behind' }),
+    },
+    { state: 'check-dark', title: 'the setup check in a dark room', shoot: guidedCheckPrompt('dark', { light: 'dark' }) },
+    {
+      state: 'check-bright',
+      title: 'the setup check with the face washed out',
+      shoot: guidedCheckPrompt('bright', { light: 'bright' }),
+    },
+    {
+      state: 'check-slow',
+      title: 'the setup check with a slow camera',
+      shoot: guidedCheckPrompt('slow', { stepMs: SLOW_STEP_MS }),
+    },
+    {
+      state: 'check-moving',
+      title: 'the setup check asking to hold still',
+      shoot: guidedCheckPrompt('moving', { scene: faceScene({ moving: true }) }),
+    },
+    { state: 'check-start-anyway', title: 'the setup check with start anyway ready', shoot: guidedCheckStartAnyway },
+    { state: 'check-all-good', title: 'the setup check all good before the warm-up', shoot: guidedCheckAllGood },
     { state: 'warm-up', title: 'the guided run warm-up with the skin outline on', shoot: guidedWarmUp },
     { state: 'outline-off', title: 'the guided run warm-up with the skin outline off', shoot: guidedOutlineOff },
     { state: 'counting', title: 'the guided run counting with the hold still hint', shoot: guidedCounting },

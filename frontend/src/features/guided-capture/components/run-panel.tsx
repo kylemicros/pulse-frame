@@ -4,6 +4,7 @@ import { RunAlerts } from "@/features/guided-capture/components/run-alerts"
 import { RunPlanList } from "@/features/guided-capture/components/run-plan-list"
 import { RunProgress } from "@/features/guided-capture/components/run-progress"
 import { RunResults } from "@/features/guided-capture/components/run-results"
+import { SetupCheckStatus } from "@/features/guided-capture/components/setup-check-status"
 import { ToggleButton } from "@/features/guided-capture/components/toggle-button"
 import { WATCH_TIP } from "@/features/guided-capture/lib/run-copy"
 import type { GuidedState, Stage } from "@/features/guided-capture/types"
@@ -17,9 +18,36 @@ type RunPanelProps = {
   hint: string | null
   chimeOn: boolean
   onToggleChime: () => void
+  onStartAnyway: () => void
+  onFocusLeave: () => void
 }
 
-export function RunPanel({ state, stage, elapsed, hint, chimeOn, onToggleChime }: RunPanelProps) {
+export function RunPanel({
+  state,
+  stage,
+  elapsed,
+  hint,
+  chimeOn,
+  onToggleChime,
+  onStartAnyway,
+  onFocusLeave,
+}: RunPanelProps) {
+  if (state.status === "checking" && state.check !== null) {
+    return (
+      <div className="flex min-w-0 flex-col gap-4">
+        <h2 className={HEADLINE}>{state.check.shown === "allGood" ? "Looking good" : "Quick setup check"}</h2>
+        <SetupCheckStatus
+          check={state.check}
+          now={state.now}
+          onStartAnyway={onStartAnyway}
+          onFocusLeave={onFocusLeave}
+        />
+        <RunAlerts errors={[state.monitor.error, state.monitor.notice]} />
+        <LiveReadings monitor={state.monitor} lastGoodBpm={state.lastGoodBpm} stage="warm-up" />
+        <PulseTrace samples={state.monitor.samples} />
+      </div>
+    )
+  }
   if (stage === "warm-up" || stage === "counted") {
     const warmUp = stage === "warm-up"
     return (

@@ -63,6 +63,8 @@ export function monitorReducer(state: MonitorState, action: MonitorAction): Moni
       return applyMessage(clearBadReply(state), action)
     case "notice":
       return { ...clearBadReply(state), notice: { ...action.error, id: (state.notice?.id ?? 0) + 1 } }
+    case "setup-sample":
+      return state
     case "unreadable":
       return state.error === null ? { ...state, error: BAD_REPLY } : state
     case "notice-expired":

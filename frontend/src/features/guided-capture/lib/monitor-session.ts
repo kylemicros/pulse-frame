@@ -10,17 +10,36 @@ import {
   stopCamera,
 } from "@/features/capture"
 import { plainError } from "@/features/guided-capture/lib/run-copy"
+import {
+  faceBox,
+  lightIn,
+  type FaceBox,
+  type FrameLight,
+  type SetupSample,
+} from "@/features/guided-capture/lib/setup-check"
 import type { SessionEvent } from "@/features/guided-capture/types"
 import type { AppError } from "@/lib/errors"
-import type { ServerMessage } from "@/lib/socket/messages"
+import { PATCH_NAMES, type FrameMessage, type ServerMessage } from "@/lib/socket/messages"
 import { FRAME_SPACING_MS, STREAM_URL, StreamClient } from "@/lib/socket/stream-client"
 
 const VIDEO_NOT_READY_RETRY_MS = 50
+const LIGHT_WIDTH = 160
+const LIGHT_HEIGHT = 120
+
+function createLightCanvas(): HTMLCanvasElement {
+  const canvas = document.createElement("canvas")
+  canvas.width = LIGHT_WIDTH
+  canvas.height = LIGHT_HEIGHT
+  return canvas
+}
 
 export class MonitorSession {
   private readonly video: HTMLVideoElement
   private readonly emit: (event: SessionEvent) => void
   private readonly canvas: HTMLCanvasElement = createFrameCanvas()
+  private readonly lightCanvas: HTMLCanvasElement = createLightCanvas()
+  private readonly lightContext = this.lightCanvas.getContext("2d", { willReadFrequently: true })
+  private checking = true
   private stream: MediaStream | null = null
   private client: StreamClient | null = null
   private ended = false
@@ -89,6 +108,7 @@ export class MonitorSession {
       return
     }
     this.ended = true
+    this.endSetupCheck()
     globalThis.clearTimeout(this.pumpTimer)
     this.trackWatch.abort()
     this.client?.close()
@@ -119,7 +139,42 @@ export class MonitorSession {
     }
     this.emit({ type: "message", message })
     if (message.type === "frame" && this.inFlightT !== null && message.t === this.inFlightT) {
+      if (this.checking) {
+        this.emit({ type: "setup-sample", sample: this.sampleOf(message) })
+      }
       this.turnDone()
+    }
+  }
+
+  endSetupCheck(): void {
+    this.checking = false
+    this.lightCanvas.width = 0
+    this.lightCanvas.height = 0
+  }
+
+  private sampleOf(message: FrameMessage): SetupSample {
+    const box = faceBox(PATCH_NAMES.map((name) => message.patches[name].outline))
+    if (box === null) {
+      return { face: false, spanPx: 0, moving: message.moving, light: null }
+    }
+    return {
+      face: true,
+      spanPx: (box.right - box.left) * this.canvas.width,
+      moving: message.moving,
+      light: this.lightOf(box),
+    }
+  }
+
+  private lightOf(box: FaceBox): FrameLight | null {
+    const context = this.lightContext
+    if (context === null) {
+      return null
+    }
+    try {
+      context.drawImage(this.canvas, 0, 0, LIGHT_WIDTH, LIGHT_HEIGHT)
+      return lightIn(context.getImageData(0, 0, LIGHT_WIDTH, LIGHT_HEIGHT).data, LIGHT_WIDTH, LIGHT_HEIGHT, box)
+    } catch {
+      return null
     }
   }
 

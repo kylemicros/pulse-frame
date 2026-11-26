@@ -34,6 +34,11 @@ export function secondsLeft(stage: Stage, elapsed: number): number {
   return Math.max(0, Math.ceil((end - elapsed) / 1000))
 }
 
+export function countdownSeconds(totalMs: number, passedMs: number): number {
+  const left = Math.ceil((totalMs - passedMs) / 1000)
+  return Math.min(totalMs / 1000, Math.max(1, left))
+}
+
 export function percentDone(elapsed: number, from: number, length: number): number {
   return Math.floor((Math.min(Math.max(elapsed - from, 0), length) / length) * 100)
 }

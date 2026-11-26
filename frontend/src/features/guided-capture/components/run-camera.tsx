@@ -9,9 +9,10 @@ type RunCameraProps = {
   scene: FrameMessage | null
   offText: string | null
   cue: string | null
+  setupCue: string | null
 }
 
-export function RunCamera({ videoRef, live, scene, offText, cue }: RunCameraProps) {
+export function RunCamera({ videoRef, live, scene, offText, cue, setupCue }: RunCameraProps) {
   const [outlineOn, setOutlineOn] = useState(true)
   return (
     <div className="flex min-w-0 flex-col gap-3">
@@ -36,6 +37,14 @@ export function RunCamera({ videoRef, live, scene, offText, cue }: RunCameraProp
         {live && outlineOn ? <PatchOverlay scene={scene} /> : null}
         {offText === null ? null : (
           <p className="pointer-events-none absolute inset-x-3 top-3 text-sm text-(--ds-cam-text)">{offText}</p>
+        )}
+        {setupCue === null ? null : (
+          <p
+            aria-hidden="true"
+            className="absolute inset-x-3 bottom-3 rounded-md border border-l-4 border-(--ds-edge) border-l-(--ds-count) bg-(--ds-surface) px-3 py-2 text-lg font-bold text-(--ds-text)"
+          >
+            {setupCue}
+          </p>
         )}
         {cue === null ? null : (
           <p className="absolute inset-x-3 bottom-3 rounded-md border border-(--ds-edge) bg-(--ds-surface) px-3 py-2 text-[0.9375rem] text-(--ds-text)">

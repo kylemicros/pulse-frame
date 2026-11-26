@@ -1,12 +1,21 @@
 import { initialMonitorState, monitorReducer } from "@/features/guided-capture/lib/monitor-reducer"
 import { noReadingReason } from "@/features/guided-capture/lib/run-copy"
 import { RESULT_FRESH_MS, RUN_MS } from "@/features/guided-capture/lib/run-plan"
+import {
+  addSetupSample,
+  advanceSetupCheck,
+  newSetupCheck,
+  restartSetupSpeed,
+  setupPassed,
+  type SetupCheck,
+} from "@/features/guided-capture/lib/setup-check"
 import type { GuidedAction, GuidedState, MonitorState, RunResult } from "@/features/guided-capture/types"
 
 export const initialGuidedState: GuidedState = {
   monitor: initialMonitorState,
   status: "idle",
   startedAt: null,
+  check: null,
   now: 0,
   result: null,
   lastGoodBpm: null,
@@ -31,7 +40,18 @@ function runResult(monitor: MonitorState, end: number): RunResult {
   }
 }
 
+function beginRun(state: GuidedState, at: number): GuidedState {
+  return { ...state, status: "running", check: null, startedAt: at, now: at }
+}
+
+function checkAt(state: GuidedState, check: SetupCheck, at: number): GuidedState {
+  return setupPassed(check, at) ? beginRun(state, at) : { ...state, check, now: at }
+}
+
 function tick(state: GuidedState, at: number): GuidedState {
+  if (state.status === "checking" && state.check !== null) {
+    return checkAt(state, advanceSetupCheck(state.check, at), at)
+  }
   if (state.status !== "running" || state.startedAt === null) {
     return state
   }
@@ -46,15 +66,25 @@ function applySession(state: GuidedState, action: Extract<GuidedAction, { type: 
   const { event } = action
   const monitor = monitorReducer(state.monitor, event)
   if (event.type === "running") {
-    return { ...state, monitor, status: "running", startedAt: action.at, now: action.at }
+    return { ...state, monitor, status: "checking", check: newSetupCheck(action.at), now: action.at }
   }
   if (event.type === "ended") {
     if (state.status === "done") {
       return { ...state, monitor }
     }
     const endError = event.error ?? state.haltError
-    const stopped = state.status === "running" || state.haltError !== null
-    return { ...state, monitor, status: stopped ? "stopped" : "idle", endError, haltError: null }
+    const checkFailed = state.status === "checking" && event.error !== null
+    const stopped = state.status === "running" || checkFailed || state.haltError !== null
+    return { ...state, monitor, status: stopped ? "stopped" : "idle", check: null, endError, haltError: null }
+  }
+  if (event.type === "link" && event.status !== "live" && state.check !== null) {
+    return { ...state, monitor, check: advanceSetupCheck(restartSetupSpeed(state.check), action.at) }
+  }
+  if (event.type === "setup-sample") {
+    if (state.status !== "checking" || state.check === null) {
+      return state
+    }
+    return checkAt(state, addSetupSample(state.check, event.sample, action.at), action.at)
   }
   if (event.type === "message" && event.message.type === "bpm" && event.message.state === "ok") {
     return { ...state, monitor, lastGoodBpm: event.message.bpm ?? state.lastGoodBpm }
@@ -72,6 +102,8 @@ export function guidedReducer(state: GuidedState, action: GuidedAction): GuidedS
       return tick(state, action.at)
     case "halt":
       return state.haltError === null ? { ...state, haltError: action.error } : state
+    case "start-anyway":
+      return state.status === "checking" ? beginRun(state, action.at) : state
     case "notice-expired":
       return { ...state, monitor: monitorReducer(state.monitor, action) }
   }
