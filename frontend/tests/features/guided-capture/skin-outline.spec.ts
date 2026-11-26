@@ -9,7 +9,15 @@ import {
   watchOutlineCount,
 } from '../../support/guided-page';
 import { faceScene, MockBackend, NO_FACE_SCENE, PATCH_NAMES, UNUSABLE, usable } from '../../support/mock-backend';
-import { boxOf, collectPageErrors, endVideoTracks, spyOnCamera, waitForMoreFrames } from '../../support/page-helpers';
+import {
+  boxOf,
+  collectPageErrors,
+  endVideoTracks,
+  spyOnCamera,
+  useWideCamera,
+  waitForMoreFrames,
+} from '../../support/page-helpers';
+import { aspectOf, overlayMisses, overlayScene, type OverlayTarget } from '../../support/app-shell';
 
 const OUTLINE_GREEN = 'rgb(0, 158, 115)';
 const OUTLINE_EDGE = 'rgb(20, 20, 20)';
@@ -547,3 +555,45 @@ test.describe('Skin outline button', () => {
     await expectStoresNothing(page);
   });
 });
+
+const OVERLAY_TARGETS: OverlayTarget[] = [
+  { name: 'forehead', x: 0.3, y: 0.15 },
+  { name: 'left_cheek', x: 0.72, y: 0.85 },
+  { name: 'right_cheek', x: 0.5, y: 0.5 },
+];
+const ALIGN_SLACK_PX = 3;
+const FOUR_BY_THREE = 4 / 3;
+const SIXTEEN_BY_NINE = 16 / 9;
+
+for (const viewport of [
+  { name: 'tall narrow desktop', size: { width: 1024, height: 1000 } },
+  { name: 'short phone', size: { width: 390, height: 240 } },
+] as const) {
+  test.describe(`skin outline alignment at ${viewport.name} size`, () => {
+    test.use({ viewport: viewport.size });
+
+    test('lands each outline on its spot in a 16:9 camera shown in a box that is neither 16:9 nor 4:3', async ({
+      page,
+    }) => {
+      await useWideCamera(page);
+      const backend = await MockBackend.attach(page);
+      backend.setScene(overlayScene(OVERLAY_TARGETS));
+      const guided = guidedPage(page);
+      await openGuidedRun(page);
+      await guided.start.click();
+
+      await expect(guided.outlines).toHaveCount(3);
+      await expect.poll(() => guided.video.evaluate((video) => (video as HTMLVideoElement).videoWidth)).toBe(1280);
+      const aspect = await aspectOf(guided.video);
+      expect(Math.abs(aspect - FOUR_BY_THREE), `the camera box is ${aspect.toFixed(3)} wide per tall`).toBeGreaterThan(0.05);
+      expect(Math.abs(aspect - SIXTEEN_BY_NINE), `the camera box is ${aspect.toFixed(3)} wide per tall`).toBeGreaterThan(0.1);
+      await expect
+        .poll(async () =>
+          (await overlayMisses(guided.video, OVERLAY_TARGETS)).filter(
+            ({ dx, dy }) => dx > ALIGN_SLACK_PX || dy > ALIGN_SLACK_PX,
+          ),
+        )
+        .toEqual([]);
+    });
+  });
+}

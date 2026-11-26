@@ -1,5 +1,5 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
-import { SETUP_MIN_FACE_SPAN_PX } from '../src/features/guided-capture/lib/setup-check';
+import { CHECK_SETTLE_MS, CHECK_SETTLED_MS, EARLIER, FAR_FACE } from './support/app-shell';
 import {
   advanceRun,
   advanceRunUntil,
@@ -22,7 +22,6 @@ import {
 import { installLitCamera, type Light } from './support/lit-camera';
 import {
   faceScene,
-  faceWithSpan,
   hrv,
   MockBackend,
   NO_FACE_SCENE,
@@ -34,17 +33,16 @@ import { headerLogo } from './support/brand';
 import { startBuiltPreview, type BuiltPreview } from './support/built-preview';
 import { longestPathCommands, refuseCamera, setTabHidden, videoIsPlaying } from './support/page-helpers';
 
-const CHECK_SETTLE_MS = 5000;
-const CHECK_SETTLED_MS = 1000;
 const START_ANYWAY_BUDGET_MS = 17000;
 const CALIBRATE_SEARCH = '?calibrate';
 
 type CheckState = { light: Light | null; scene: Scene; stepMs: number };
 
 const VIEWPORTS = [
-  { name: 'desktop', size: { width: 1280, height: 800 } },
-  { name: 'tablet', size: { width: 820, height: 1180 } },
-  { name: 'phone', size: { width: 390, height: 844 } },
+  { name: 'desktop', size: { width: 1280, height: 800 }, panelScrolls: true },
+  { name: 'desktop-wide', size: { width: 1920, height: 1080 }, panelScrolls: true },
+  { name: 'tablet', size: { width: 820, height: 1180 }, panelScrolls: false },
+  { name: 'phone', size: { width: 390, height: 844 }, panelScrolls: false },
 ] as const;
 
 const OK_READING = { bpm: 72.4, quality_db: 6.3, state: 'ok' } as const;
@@ -127,7 +125,7 @@ async function runToEnd(page: Page, session: Session, last: Hrv): Promise<void> 
   await startGuidedRun(page, session);
   await pushAndConfirm(page, session.backend, { bpm: 68.2, quality_db: 9.4, state: 'ok' });
   await advanceRunUntil(page, session.backend, guided.countedTimer);
-  await setHrvAndConfirm(page, session.backend, hrv({ rmssd_ms: 39.4, sdnn_ms: 45.2, minute_bpm: 68.4, minute_count: 66 }));
+  await setHrvAndConfirm(page, session.backend, EARLIER);
   await advanceRun(page, session.backend, 60000);
   await setHrvAndConfirm(page, session.backend, last);
   await advanceRunUntil(page, session.backend, guided.startAgain);
@@ -140,6 +138,17 @@ async function guidedLinkLost(page: Page, session: Session, close: { code: numbe
   await expectOnlyMockedSockets(session);
   session.backend.refuseEveryConnection(close);
   session.backend.dropOpenConnections(close);
+}
+
+async function scrollPanelToEnd(page: Page, regionName: 'Setup check details' | 'Counting details'): Promise<void> {
+  const region = page.getByRole('main').getByRole('region', { name: regionName, exact: true });
+  await expect(region).toBeVisible();
+  await region.focus();
+  await page.keyboard.press('End');
+  await expect
+    .poll(() => region.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
+    .toBeLessThanOrEqual(1);
+  await expect(calibrationBox(page).region).toBeInViewport();
 }
 
 test.describe('guided page screenshots', () => {
@@ -561,6 +570,49 @@ test.describe('guided page screenshots', () => {
     await capture(page, testInfo, name);
   }
 
+  async function reachCalibrateCounting(page: Page): Promise<Session> {
+    const session = await openBuiltGuidedRun(page, null, CALIBRATE_SEARCH);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+    await pushAndConfirm(page, session.backend, { bpm: 67.2, quality_db: 9.1, state: 'ok' });
+    await advanceRunUntil(page, session.backend, guided.countedTimer);
+    await setHrvAndConfirm(page, session.backend, EARLIER);
+    await advanceRun(page, session.backend, 3000, 1000);
+
+    await expect(guided.countedTimer).toBeVisible();
+    await expect(calibrationBox(page).phase('This run')).toBeVisible();
+    await expectOnlyMockedSockets(session);
+    return session;
+  }
+
+  async function calibrateCounting(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    await reachCalibrateCounting(page);
+    await capture(page, testInfo, name);
+  }
+
+  async function calibrateCheckScrolled(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltCheck(
+      page,
+      { light: 'even', scene: faceScene(), stepMs: FRAME_SPACING_MS },
+      CALIBRATE_SEARCH,
+    );
+    await paceReplies(page, session.backend, 2 * CHECK_SETTLED_MS);
+    await expect(calibrationBox(page).phase('Live, setup check')).toBeVisible();
+
+    await scrollPanelToEnd(page, 'Setup check details');
+
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function calibrateCountingScrolled(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    await reachCalibrateCounting(page);
+
+    await scrollPanelToEnd(page, 'Counting details');
+
+    await capture(page, testInfo, name);
+  }
+
   async function calibrateDone(page: Page, testInfo: TestInfo, name: string, last: Hrv): Promise<void> {
     const session = await openBuiltGuidedRun(page, null, CALIBRATE_SEARCH);
     const box = calibrationBox(page);
@@ -587,8 +639,6 @@ test.describe('guided page screenshots', () => {
     );
   }
 
-  const farFace = faceWithSpan(SETUP_MIN_FACE_SPAN_PX / 2);
-
   const GUIDED_STATES = [
     { state: 'header-logo', title: 'the page header with the logo', shoot: headerWithLogo },
     { state: 'idle', title: 'the guided run idle page', shoot: guidedIdle },
@@ -597,7 +647,7 @@ test.describe('guided page screenshots', () => {
       title: 'the setup check with no face found',
       shoot: guidedCheckPrompt('noFace', { scene: NO_FACE_SCENE }),
     },
-    { state: 'check-far', title: 'the setup check with the face too far away', shoot: guidedCheckPrompt('far', { scene: farFace }) },
+    { state: 'check-far', title: 'the setup check with the face too far away', shoot: guidedCheckPrompt('far', { scene: FAR_FACE }) },
     {
       state: 'check-behind',
       title: 'the setup check with light behind the face',
@@ -645,6 +695,7 @@ test.describe('guided page screenshots', () => {
       shoot: calibrateCheckBehind,
     },
     { state: 'calibrate-warm-up', title: 'the calibration readout frozen during the warm-up', shoot: calibrateWarmUp },
+    { state: 'calibrate-counting', title: 'the calibration readout while counting', shoot: calibrateCounting },
     { state: 'calibrate-done', title: 'the calibration readout on a result with a reading', shoot: calibrateDoneReading },
     {
       state: 'calibrate-no-reading',
@@ -653,11 +704,26 @@ test.describe('guided page screenshots', () => {
     },
   ] as const;
 
+  const PANEL_SCROLL_STATES = [
+    {
+      state: 'calibrate-check-scrolled',
+      title: 'the side panel scrolled to its end during the setup check',
+      shoot: calibrateCheckScrolled,
+    },
+    {
+      state: 'calibrate-counting-scrolled',
+      title: 'the side panel scrolled to its end while counting',
+      shoot: calibrateCountingScrolled,
+    },
+  ] as const;
+
   for (const viewport of VIEWPORTS) {
+    const states = viewport.panelScrolls ? [...GUIDED_STATES, ...PANEL_SCROLL_STATES] : GUIDED_STATES;
+
     test.describe(`${viewport.name} guided run screenshots`, () => {
       test.use({ viewport: viewport.size });
 
-      for (const { state, title, shoot } of GUIDED_STATES) {
+      for (const { state, title, shoot } of states) {
         test(`screenshots ${title} at ${viewport.name} width`, async ({ page }, testInfo) => {
           await shoot(page, testInfo, `${viewport.name}-guided-${state}`);
         });
@@ -667,7 +733,7 @@ test.describe('guided page screenshots', () => {
     test.describe(`${viewport.name} guided run dark theme screenshots`, () => {
       test.use({ viewport: viewport.size, colorScheme: 'dark' });
 
-      for (const { state, title, shoot } of GUIDED_STATES) {
+      for (const { state, title, shoot } of states) {
         test(`screenshots ${title} in the dark theme at ${viewport.name} width`, async ({ page }, testInfo) => {
           await shoot(page, testInfo, `${viewport.name}-dark-guided-${state}`);
         });

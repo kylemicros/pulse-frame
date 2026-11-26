@@ -45,8 +45,8 @@ export function CalibrationReadout({ check, now, checkEnd, result }: Calibration
       </div>
       <p className="mb-2 text-(--ds-muted)">{READOUT_NOTE}</p>
       {result === null || checkEnd === null ? null : <p className="mb-2 font-bold">{checkEndLine(checkEnd)}</p>}
-      <Table className="text-sm @max-[360px]:block">
-        <TableHeader className="@max-[360px]:sr-only">
+      <Table className="text-sm @max-[312px]:block">
+        <TableHeader className="@max-[312px]:sr-only">
           <TableRow className="border-0 hover:bg-transparent">
             <TableHead scope="col" className={COLUMN}>
               {READOUT_COLUMNS.measure}
@@ -62,7 +62,7 @@ export function CalibrationReadout({ check, now, checkEnd, result }: Calibration
             </TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody className="@max-[360px]:block @max-[360px]:w-full">
+        <TableBody className="@max-[312px]:block @max-[312px]:w-full">
           {rows.map((row) => (
             <CalibrationReadoutRow key={row.label} row={row} live={live} />
           ))}

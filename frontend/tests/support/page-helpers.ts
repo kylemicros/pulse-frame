@@ -132,6 +132,34 @@ export async function useDrawnCamera(page: Page): Promise<void> {
   });
 }
 
+export async function useWideCamera(page: Page, width = 1280, height = 720): Promise<void> {
+  await page.addInitScript(
+    ({ wide, tall }) => {
+      navigator.mediaDevices.getUserMedia = async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = wide;
+        canvas.height = tall;
+        const context = canvas.getContext('2d');
+        if (context === null) {
+          throw new Error('The wide camera got no 2D context');
+        }
+        const draw = () => {
+          context.fillStyle = 'rgb(128, 128, 128)';
+          context.fillRect(0, 0, wide, tall);
+        };
+        draw();
+        const timer = setInterval(draw, 100);
+        const stream = canvas.captureStream(30);
+        for (const track of stream.getTracks()) {
+          track.addEventListener('ended', () => clearInterval(timer));
+        }
+        return stream;
+      };
+    },
+    { wide: width, tall: height },
+  );
+}
+
 export function showCameraView(page: Page, kind: CameraView): Promise<void> {
   return page.evaluate((next) => {
     (globalThis as unknown as ViewWindow).cameraView.current = next;

@@ -1,3 +1,4 @@
+import { centreCrop } from "@/features/capture"
 import { useHeldFace } from "@/features/guided-capture/hooks/use-held-face"
 import { overlayPoints } from "@/features/guided-capture/lib/overlay-geometry"
 import { PATCH_NAMES, type FrameMessage, type PatchName, type Point } from "@/lib/socket/messages"
@@ -10,6 +11,8 @@ const EDGE_WIDTH = 5
 
 type PatchOverlayProps = {
   scene: FrameMessage | null
+  sourceWidth: number
+  sourceHeight: number
 }
 
 type DrawnPatch = { name: PatchName; points: string }
@@ -24,39 +27,42 @@ function drawnPatches(scene: FrameMessage | null): DrawnPatch[] {
   })
 }
 
-export function PatchOverlay({ scene }: PatchOverlayProps) {
+export function PatchOverlay({ scene, sourceWidth, sourceHeight }: PatchOverlayProps) {
   const patches = drawnPatches(useHeldFace(scene))
+  const crop = centreCrop(sourceWidth, sourceHeight)
   return (
     <svg
-      viewBox="0 0 1 1"
-      preserveAspectRatio="none"
+      viewBox={`0 0 ${sourceWidth} ${sourceHeight}`}
+      preserveAspectRatio="xMidYMid slice"
       aria-hidden="true"
       focusable="false"
       className="pointer-events-none absolute inset-0 size-full"
     >
-      {patches.map(({ name, points }) => (
-        <polygon
-          key={`edge-${name}`}
-          points={points}
-          fill="none"
-          stroke={OUTLINE_EDGE}
-          strokeWidth={EDGE_WIDTH}
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
-      {patches.map(({ name, points }) => (
-        <polygon
-          key={`line-${name}`}
-          data-testid={`patch-outline-${name}`}
-          points={points}
-          fill="none"
-          stroke={OUTLINE_GREEN}
-          strokeWidth={LINE_WIDTH}
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
+      <g transform={`translate(${crop.x} ${crop.y}) scale(${crop.width} ${crop.height})`}>
+        {patches.map(({ name, points }) => (
+          <polygon
+            key={`edge-${name}`}
+            points={points}
+            fill="none"
+            stroke={OUTLINE_EDGE}
+            strokeWidth={EDGE_WIDTH}
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+        {patches.map(({ name, points }) => (
+          <polygon
+            key={`line-${name}`}
+            data-testid={`patch-outline-${name}`}
+            points={points}
+            fill="none"
+            stroke={OUTLINE_GREEN}
+            strokeWidth={LINE_WIDTH}
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </g>
     </svg>
   )
 }
