@@ -47,6 +47,8 @@ export function useGuidedRun() {
     sessionRef.current?.stop()
   }, [])
 
+  const startAnyway = useCallback(() => dispatch({ type: "start-anyway", at: performance.now() }), [])
+
   const toggleChime = useCallback(() => setChimeOn((on) => !on), [])
 
   useEffect(() => {
@@ -73,7 +75,13 @@ export function useGuidedRun() {
   }, [chime])
 
   useEffect(() => {
-    if (state.status !== "running") {
+    if (state.status === "running") {
+      sessionRef.current?.endSetupCheck()
+    }
+  }, [state.status])
+
+  useEffect(() => {
+    if (state.status !== "running" && state.status !== "checking") {
       return undefined
     }
     const timer = globalThis.setInterval(() => dispatch({ type: "tick", at: performance.now() }), TICK_MS)
@@ -120,5 +128,5 @@ export function useGuidedRun() {
     return () => globalThis.clearTimeout(timer)
   }, [noticeId])
 
-  return { state, stage, videoRef, start, stop, chimeOn, toggleChime }
+  return { state, stage, videoRef, start, stop, startAnyway, chimeOn, toggleChime }
 }

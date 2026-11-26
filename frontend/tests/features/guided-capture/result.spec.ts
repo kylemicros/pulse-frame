@@ -6,6 +6,7 @@ import {
   expectCurrentStep,
   expectQuietRef,
   guidedPage,
+  passSetupCheck,
   pushAndConfirm,
   setHrvAndConfirm,
   startRun,
@@ -233,7 +234,7 @@ test.describe('guided run result', () => {
     await expect(guided.main).not.toContainText(/kept leaving/);
   });
 
-  test('starts a fresh warm-up when Start again is pressed after a result', async ({ page }) => {
+  test('starts a fresh warm-up after the setup check when Start again is pressed after a result', async ({ page }) => {
     await page.clock.install();
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
@@ -241,6 +242,8 @@ test.describe('guided run result', () => {
     await advanceRunUntil(page, backend, guided.startAgain);
 
     await guided.startAgain.click();
+    await expect.poll(() => backend.openConnections().length).toBe(1);
+    await passSetupCheck(page, backend);
 
     await expectCurrentStep(page, 'Warm-up');
     await expect(guided.headline('Stay in frame. No need to watch.')).toBeVisible();

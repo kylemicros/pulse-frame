@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { expectQuietRef, guidedPage, openGuidedRun, RUN_MS, startRun } from '../../support/guided-page';
+import { expectQuietRef, guidedPage, openGuidedRun, RUN_MS, startCheck, startRun } from '../../support/guided-page';
 import { MockBackend, STREAM_URL, WIRE_ERRORS } from '../../support/mock-backend';
 import { settleRendering, waitForMoreFrames } from '../../support/page-helpers';
 import { socketRecords } from '../../support/socket-recorder';
@@ -128,7 +128,7 @@ test.describe('stream socket client', () => {
     const backend = await MockBackend.attach(page);
     backend.setReplyDelay(250);
 
-    await startRun(page, backend);
+    await startCheck(page, backend);
     await waitForMoreFrames(backend, 4);
 
     expect(backend.frames.filter((frame) => frame.arrivedWhileAwaitingReply)).toEqual([]);
@@ -137,7 +137,7 @@ test.describe('stream socket client', () => {
   test('spaces frame sends at least 34 ms apart', async ({ page }) => {
     const backend = await MockBackend.attach(page);
 
-    await startRun(page, backend);
+    await startCheck(page, backend);
     await waitForMoreFrames(backend, 25);
 
     const [streaming] = backend.openConnections();

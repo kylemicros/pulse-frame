@@ -64,6 +64,20 @@ export function socketRecords(page: Page): Promise<SocketRecord[]> {
   );
 }
 
+export function lastFrameReplyT(page: Page): Promise<number | null> {
+  return page.evaluate((url) => {
+    const record = (globalThis as unknown as RecorderWindow).socketRecords.findLast((each) => each.url === url);
+    const last = record?.messages.at(-1);
+    if (last === undefined) {
+      return null;
+    }
+    const fields: unknown = JSON.parse(last.text);
+    return typeof fields === 'object' && fields !== null && 'type' in fields && fields.type === 'frame' && 't' in fields
+      ? Number(fields.t)
+      : null;
+  }, STREAM_URL);
+}
+
 function parsed(text: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(text);

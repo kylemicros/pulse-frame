@@ -2,6 +2,9 @@ export function RunPlanList() {
   return (
     <ol className="list-decimal pl-5.5">
       <li className="mb-1.5">
+        <strong>Quick check, a few seconds.</strong> We nudge you until the camera gets a good look at you.
+      </li>
+      <li className="mb-1.5">
         <strong>Warm-up, 60 s.</strong> Stay in frame. No need to watch the screen.
       </li>
       <li className="mb-1.5">

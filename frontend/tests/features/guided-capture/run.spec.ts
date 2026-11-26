@@ -11,7 +11,9 @@ import {
 import { MockBackend } from '../../support/mock-backend';
 
 test.describe('guided run phases', () => {
-  test('starts the warm-up on Start with step 2 current and a silent countdown from 60 s', async ({ page }) => {
+  test('starts the warm-up once the setup check passes, with step 2 current and a silent countdown from 60 s', async ({
+    page,
+  }) => {
     await page.clock.install();
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);

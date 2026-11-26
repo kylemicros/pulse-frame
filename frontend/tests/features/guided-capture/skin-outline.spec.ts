@@ -4,6 +4,7 @@ import {
   guidedPage,
   openGuidedRun,
   outlineCountChanges,
+  passSetupCheck,
   startRun,
   watchOutlineCount,
 } from '../../support/guided-page';
@@ -436,6 +437,7 @@ test.describe('Skin outline button', () => {
   });
 
   test('stays in the same place under the camera through the warm-up and after Stop', async ({ page }) => {
+    await page.clock.install();
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
     await openGuidedRun(page);
@@ -444,6 +446,7 @@ test.describe('Skin outline button', () => {
 
     await guided.start.click();
     await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
+    await passSetupCheck(page, backend);
     await expect(guided.skinOutline).toBeVisible();
     expect(await placeUnderCamera(page)).toEqual(idle);
 
@@ -495,6 +498,7 @@ test.describe('Skin outline button', () => {
   });
 
   test('set off before Start, keeps the outline off for the run and across Start again', async ({ page }) => {
+    await page.clock.install();
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
     await openGuidedRun(page);
@@ -506,6 +510,8 @@ test.describe('Skin outline button', () => {
 
     await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
     await waitForMoreFrames(backend, 10);
+    await expect(guided.outlines).toHaveCount(0);
+    await passSetupCheck(page, backend);
     await expect(guided.outlines).toHaveCount(0);
 
     await guided.stop.click();

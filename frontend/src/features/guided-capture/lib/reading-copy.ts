@@ -1,3 +1,4 @@
+import { countdownSeconds } from "@/features/guided-capture/lib/run-plan"
 import type { FrameMessage } from "@/lib/socket/messages"
 
 export const ACQUIRE_MS = 20000
@@ -18,7 +19,5 @@ export const VIDEO_HINT: Record<SceneHint, string | null> = {
 }
 
 export function settlingSeconds(since: number, latestT: number | null): number {
-  const elapsed = latestT === null ? 0 : latestT - since
-  const left = Math.ceil((ACQUIRE_MS - elapsed) / 1000)
-  return Math.min(ACQUIRE_MS / 1000, Math.max(1, left))
+  return countdownSeconds(ACQUIRE_MS, latestT === null ? 0 : latestT - since)
 }

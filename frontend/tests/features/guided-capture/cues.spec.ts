@@ -7,6 +7,7 @@ import {
   expectCurrentStep,
   guidedPage,
   openGuidedRun,
+  passSetupCheck,
   pushAndConfirm,
   soundsPlayed,
   spyOnAudioClose,
@@ -51,8 +52,9 @@ test.describe('guided run cues', () => {
     await watchText(guided.milestones, 'milestones');
 
     await guided.start.click();
-    const startedAt = await pageNow(page);
     await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
+    await passSetupCheck(page, backend);
+    const startedAt = await pageNow(page);
     await runWithSteadyReadings(page, backend);
     await expect(guided.milestones).toHaveText(MILESTONES[5]);
 
@@ -70,6 +72,8 @@ test.describe('guided run cues', () => {
     const guided = guidedPage(page);
     await openGuidedRun(page);
     await guided.start.click();
+    await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
+    await passSetupCheck(page, backend);
 
     await expect(page).toHaveTitle(/^Warm-up, \d+ s\b/);
     await expect(guided.headline('Stay in frame. No need to watch.')).toBeVisible();
@@ -96,6 +100,7 @@ test.describe('guided run cues', () => {
     await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
     await guided.start.click();
     await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
+    await passSetupCheck(page, backend);
     const duringWarmUp = await soundsPlayed(page);
 
     await advanceRunUntil(page, backend, guided.countedTimer, 1000);
@@ -174,6 +179,8 @@ test.describe('guided run cues', () => {
     await watchText(guided.milestones, 'milestones');
 
     await guided.start.click();
+    await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
+    await passSetupCheck(page, backend);
     await expect(page).toHaveTitle(/^Warm-up, \d+ s\b/);
     await expect(guided.headline('Stay in frame. No need to watch.')).toBeVisible();
     await expectCurrentStep(page, 'Warm-up');
@@ -206,6 +213,8 @@ test.describe('guided run cues', () => {
     await watchText(guided.milestones, 'milestones');
 
     await guided.start.click();
+    await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
+    await passSetupCheck(page, backend);
     await expect(page).toHaveTitle(/^Warm-up, \d+ s\b/);
     await advanceRunUntil(page, backend, guided.countedTimer);
     await expect(page).toHaveTitle(/^Counting, \d+ s\b/);

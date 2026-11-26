@@ -1,7 +1,8 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { SETUP_MIN_FPS } from '../../src/features/guided-capture/lib/setup-check';
 import type { Hrv, MockBackend, PatchName } from './mock-backend';
 import { pageNow } from './page-helpers';
-import { firstMessageAfter, socketRecords } from './socket-recorder';
+import { firstMessageAfter, lastFrameReplyT, socketRecords } from './socket-recorder';
 
 type Reading = { bpm: number | null; quality_db: number | null; state: 'acquiring' | 'ok' | 'low_quality' };
 
@@ -20,12 +21,75 @@ export const VARIATION_LINE =
   'Both show how much the gap between your beats shifts, in ms (thousandths of a second). Compare them only with your own runs.';
 export const OLD_VARIATION_LATER = 'Both variation numbers fill in with a later update.';
 
+export const FRAME_SPACING_MS = 34;
+export const LONG_STEP_MS = 100;
+export const SLOW_STEP_MS = Math.ceil(2000 / SETUP_MIN_FPS);
+const PASS_CHECK_BUDGET_MS = 8000;
+const PACE_SLICE_STEPS = 5;
+const PAUSE_AHEAD_MS = 100;
+const PACED_POLL = { intervals: [5, 10, 20] };
+
+export type SetupProblem = 'noFace' | 'far' | 'behind' | 'dark' | 'bright' | 'slow' | 'moving';
+export type SetupRow = 'Distance' | 'Light' | 'Stillness' | 'Camera speed';
+type Prompt = { prompt: string; line: string };
+
+export const SETUP_PROMPTS: Record<SetupProblem, Prompt> = {
+  noFace: { prompt: "Can't find your face.", line: 'Sit facing the camera so your whole face fits in the oval.' },
+  far: {
+    prompt: 'Move closer to the camera.',
+    line: "You're a bit far away to read. Scoot in until your face fills the oval.",
+  },
+  behind: {
+    prompt: 'There is light behind you.',
+    line: 'A bright window or lamp behind you turns your face into a silhouette. Turn so the light hits your face instead.',
+  },
+  dark: {
+    prompt: 'Make the room a little brighter.',
+    line: 'Your face is hiding in the shadows. Switch on a lamp or face a window.',
+  },
+  bright: {
+    prompt: 'Ease off the light a little.',
+    line: 'Your face is washed out. Back away from the lamp or point it somewhere else.',
+  },
+  slow: {
+    prompt: 'The camera is running slow.',
+    line: 'Close other apps using the camera, and add some light. Cameras slow down in the dark.',
+  },
+  moving: {
+    prompt: 'Hold still.',
+    line: 'Settle in, then stay put like a statue for a few seconds. Breathing is allowed.',
+  },
+};
+
+export const SETUP_ORDER: SetupProblem[] = ['noFace', 'far', 'behind', 'dark', 'bright', 'slow', 'moving'];
+export const SETUP_ROWS: SetupRow[] = ['Distance', 'Light', 'Stillness', 'Camera speed'];
+export const ALL_GOOD_PROMPT = 'All good. Hold that.';
+export const START_ANYWAY_SAID = 'You can start anyway now.';
+
+export function startsWith(text: string): RegExp {
+  return new RegExp(`^${text.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}`);
+}
+
+export function wholeText(text: string): RegExp {
+  return new RegExp(`${startsWith(text).source}$`);
+}
+
 export function guidedPage(page: Page) {
   const main = page.getByRole('main');
   const stepList = main.getByRole('list', { name: 'Capture steps' });
   const steps = stepList.getByRole('listitem');
   const liveReadings = main.getByRole('region', { name: 'Live readings' });
+  const video = main.getByLabel('Camera preview');
+  const setupCheck = main.getByRole('list', { name: 'Setup check' });
   return {
+    setupCheck,
+    setupRow: (name: SetupRow): Locator => setupCheck.getByRole('listitem').filter({ hasText: name }),
+    setupPrompt: main.getByTestId('setup-prompt'),
+    cameraCue: (text: string): Locator => video.locator('xpath=..').getByText(text, { exact: true }),
+    spoken: (text: string): Locator => main.getByRole('status').filter({ hasText: wholeText(text) }),
+    startAnyway: main.getByRole('button', { name: 'Start anyway', exact: true }),
+    startAnywayWait: main.getByRole('progressbar', { name: 'Until start anyway shows up' }),
+    anywayLine: main.getByText(/^Can't fix it right now\?/),
     main,
     stepList,
     steps,
@@ -37,7 +101,7 @@ export function guidedPage(page: Page) {
     startAgain: main.getByRole('button', { name: 'Start again', exact: true }),
     chime: main.getByRole('button', { name: /^Chime at start and end/ }),
     skinOutline: main.getByRole('button', { name: /^Skin outline: (on|off)$/ }),
-    video: main.getByLabel('Camera preview'),
+    video,
     outlines: main.getByTestId(/^patch-outline-/),
     outline: (name: PatchName): Locator => main.getByTestId(`patch-outline-${name}`),
     warmUpTimer: main.getByRole('timer', { name: 'Time until counting starts' }),
@@ -60,10 +124,147 @@ export async function openGuidedRun(page: Page): Promise<void> {
   await expect(guidedPage(page).stepList).toBeVisible();
 }
 
-export async function startRun(page: Page, backend: MockBackend): Promise<void> {
+export async function startCheck(page: Page, backend: MockBackend): Promise<void> {
   await openGuidedRun(page);
   await guidedPage(page).start.click();
   await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
+}
+
+export async function startRun(page: Page, backend: MockBackend): Promise<void> {
+  await page.clock.install();
+  await startCheck(page, backend);
+  await passSetupCheck(page, backend);
+}
+
+export async function pauseClock(page: Page): Promise<void> {
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(now + PAUSE_AHEAD_MS);
+}
+
+async function replyToLatestFrame(page: Page, backend: MockBackend): Promise<void> {
+  await expect
+    .poll(async () => {
+      const [open] = backend.openConnections();
+      const latest = open === undefined ? undefined : backend.framesOn(open.id).at(-1);
+      if (latest === undefined) {
+        return true;
+      }
+      return (await lastFrameReplyT(page)) === Math.floor(latest.captureMs);
+    }, PACED_POLL)
+    .toBe(true);
+}
+
+export async function paceReplies(page: Page, backend: MockBackend, ms: number, stepMs = FRAME_SPACING_MS): Promise<void> {
+  for (let spent = 0; spent < ms; spent += stepMs) {
+    await replyToLatestFrame(page, backend);
+    const target = backend.frames.length + 1;
+    await page.clock.runFor(stepMs);
+    await expect
+      .poll(() => backend.frames.length >= target || backend.openConnections().length === 0, PACED_POLL)
+      .toBe(true);
+  }
+  await replyToLatestFrame(page, backend);
+}
+
+export async function paceUntil(
+  page: Page,
+  backend: MockBackend,
+  shown: Locator,
+  budgetMs: number,
+  stepMs = FRAME_SPACING_MS,
+): Promise<void> {
+  let spentMs = 0;
+  while (!(await shown.isVisible())) {
+    expect(spentMs, `page time paced waiting for ${shown.toString()}`).toBeLessThan(budgetMs);
+    await paceReplies(page, backend, stepMs * PACE_SLICE_STEPS, stepMs);
+    spentMs += stepMs * PACE_SLICE_STEPS;
+  }
+}
+
+export async function paceUntilPageTime(
+  page: Page,
+  backend: MockBackend,
+  at: number,
+  stepMs = FRAME_SPACING_MS,
+): Promise<void> {
+  const left = at - (await pageNow(page));
+  if (left > 0) {
+    await paceReplies(page, backend, left, stepMs);
+  }
+}
+
+export async function passSetupCheck(page: Page, backend: MockBackend): Promise<void> {
+  const guided = guidedPage(page);
+  if (await guided.warmUpTimer.isVisible()) {
+    return;
+  }
+  await pauseClock(page);
+  await paceUntil(page, backend, guided.warmUpTimer, PASS_CHECK_BUDGET_MS);
+  await page.clock.resume();
+}
+
+type Said = { at: number; text: string };
+
+type SaidWindow = Window & { announcements: Said[]; textOf: Record<string, Said[]> };
+
+export async function recordAnnouncements(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const said: Said[] = [];
+    Object.defineProperty(globalThis, 'announcements', { value: said });
+    const last = new WeakMap<Element, string>();
+    const liveRoles = new Set(['status', 'alert', 'log', 'marquee']);
+    const isLive = (element: Element): boolean => {
+      const live = element.getAttribute('aria-live');
+      if (live !== null) {
+        return live !== 'off';
+      }
+      const role = element.getAttribute('role');
+      return role === null ? element.tagName === 'OUTPUT' : liveRoles.has(role);
+    };
+    const scan = () => {
+      for (const element of document.querySelectorAll('[aria-live], [role], output')) {
+        if (!isLive(element)) {
+          continue;
+        }
+        const text = (element.textContent ?? '').replaceAll(/\s+/g, ' ').trim();
+        if (last.get(element) !== text) {
+          last.set(element, text);
+          if (text !== '') {
+            said.push({ at: performance.now(), text });
+          }
+        }
+      }
+    };
+    new MutationObserver(scan).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+}
+
+export function announcements(page: Page): Promise<Said[]> {
+  return page.evaluate(() => [...(globalThis as unknown as SaidWindow).announcements]);
+}
+
+export async function recordTextOf(page: Page, testId: string): Promise<void> {
+  await page.addInitScript((id) => {
+    const host = globalThis as unknown as SaidWindow;
+    if (host.textOf === undefined) {
+      Object.defineProperty(globalThis, 'textOf', { value: {} });
+    }
+    const changes: Said[] = [];
+    host.textOf[id] = changes;
+    let last = '';
+    new MutationObserver(() => {
+      const element = document.querySelector(`[data-testid="${id}"]`);
+      const text = (element?.textContent ?? '').replaceAll(/\s+/g, ' ').trim();
+      if (text !== last) {
+        last = text;
+        changes.push({ at: performance.now(), text });
+      }
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  }, testId);
+}
+
+export function recordedTextOf(page: Page, testId: string): Promise<Said[]> {
+  return page.evaluate((id) => [...(globalThis as unknown as SaidWindow).textOf[id]], testId);
 }
 
 async function nextFrameOrClosed(backend: MockBackend): Promise<void> {

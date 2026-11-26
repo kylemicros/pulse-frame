@@ -7,7 +7,7 @@ export { STREAM_URL };
 export type PatchName = 'forehead' | 'left_cheek' | 'right_cheek';
 type Point = [number, number];
 type PatchWire = { usable: boolean; outline: Point[] | null };
-type Scene = { face: boolean; moving: boolean; patches: Record<PatchName, PatchWire> };
+export type Scene = { face: boolean; moving: boolean; patches: Record<PatchName, PatchWire> };
 type ReadingState = 'acquiring' | 'ok' | 'low_quality';
 type Reading = { bpm: number | null; quality_db: number | null; state: ReadingState };
 type Sample = [number, number];
@@ -81,6 +81,34 @@ export function faceScene(overrides: Partial<Scene> = {}): Scene {
       right_cheek: usable(RIGHT_CHEEK),
     },
     ...overrides,
+  };
+}
+
+export const FRAME_WIDTH_PX = 640;
+export const FRAME_HEIGHT_PX = 480;
+
+export function outlinePoints(scene: Scene): Point[] {
+  return PATCH_NAMES.flatMap((name) => scene.patches[name].outline ?? []);
+}
+
+export function faceSpanPx(scene: Scene): number {
+  const xs = outlinePoints(scene).map(([x]) => x);
+  return (Math.max(...xs) - Math.min(...xs)) * FRAME_WIDTH_PX;
+}
+
+export function faceWithSpan(spanPx: number, overrides: Partial<Scene> = {}): Scene {
+  const scene = faceScene(overrides);
+  const points = outlinePoints(scene);
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const centreX = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const centreY = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const factor = spanPx / faceSpanPx(scene);
+  const scale = (outline: Point[]): PatchWire =>
+    usable(outline.map(([x, y]): Point => [centreX + (x - centreX) * factor, centreY + (y - centreY) * factor]));
+  return {
+    ...scene,
+    patches: { forehead: scale(FOREHEAD), left_cheek: scale(LEFT_CHEEK), right_cheek: scale(RIGHT_CHEEK) },
   };
 }
 
