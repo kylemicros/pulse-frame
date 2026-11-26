@@ -1,3 +1,4 @@
+import { CalibrationReadout } from "@/features/guided-capture/components/calibration-readout"
 import { LiveReadings } from "@/features/guided-capture/components/live-readings"
 import { PulseTrace } from "@/features/guided-capture/components/pulse-trace"
 import { RunAlerts } from "@/features/guided-capture/components/run-alerts"
@@ -20,6 +21,7 @@ type RunPanelProps = {
   onToggleChime: () => void
   onStartAnyway: () => void
   onFocusLeave: () => void
+  calibrate: boolean
 }
 
 export function RunPanel({
@@ -31,7 +33,11 @@ export function RunPanel({
   onToggleChime,
   onStartAnyway,
   onFocusLeave,
+  calibrate,
 }: RunPanelProps) {
+  const readout = calibrate ? (
+    <CalibrationReadout check={state.check} now={state.now} checkEnd={state.checkEnd} result={state.result} />
+  ) : null
   if (state.status === "checking" && state.check !== null) {
     return (
       <div className="flex min-w-0 flex-col gap-4">
@@ -45,6 +51,7 @@ export function RunPanel({
         <RunAlerts errors={[state.monitor.error, state.monitor.notice]} />
         <LiveReadings monitor={state.monitor} lastGoodBpm={state.lastGoodBpm} stage="warm-up" />
         <PulseTrace samples={state.monitor.samples} />
+        {readout}
       </div>
     )
   }
@@ -67,6 +74,7 @@ export function RunPanel({
         <RunAlerts errors={[state.monitor.error, state.monitor.notice]} />
         <LiveReadings monitor={state.monitor} lastGoodBpm={state.lastGoodBpm} stage={stage} />
         <PulseTrace samples={state.monitor.samples} />
+        {readout}
       </div>
     )
   }
@@ -86,6 +94,7 @@ export function RunPanel({
         ) : (
           <p className="font-mono text-sm text-(--ds-muted)">{`Ref: ${result.why.code}`}</p>
         )}
+        {readout}
       </div>
     )
   }

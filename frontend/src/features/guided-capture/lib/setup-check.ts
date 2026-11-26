@@ -87,29 +87,53 @@ export function newSetupCheck(at: number): SetupCheck {
   return { startedAt: at, sample: null, firstSampleAt: null, recent: [], shown: null, shownAt: at, goodSince: null }
 }
 
-function speed(check: SetupCheck, at: number): "good" | "slow" | "unknown" {
+export function setupFps(check: SetupCheck, at: number): number | null {
   if (check.firstSampleAt === null || at - check.firstSampleAt < SPEED_WINDOW_MS) {
-    return "unknown"
+    return null
   }
   const replies = check.recent.filter((time) => time > at - SPEED_WINDOW_MS).length
-  return (replies * 1000) / SPEED_WINDOW_MS >= SETUP_MIN_FPS ? "good" : "slow"
+  return (replies * 1000) / SPEED_WINDOW_MS
+}
+
+export function spanFits(spanPx: number): boolean {
+  return spanPx >= SETUP_MIN_FACE_SPAN_PX
+}
+
+export function brightnessFits(brightness: number): boolean {
+  return brightness >= SETUP_BRIGHTNESS_MIN && brightness <= SETUP_BRIGHTNESS_MAX
+}
+
+export function backlightFits(backlitShare: number): boolean {
+  return backlitShare <= SETUP_BACKLIGHT_SHARE
+}
+
+export function fpsFits(fps: number): boolean {
+  return fps >= SETUP_MIN_FPS
+}
+
+function speed(check: SetupCheck, at: number): "good" | "slow" | "unknown" {
+  const fps = setupFps(check, at)
+  if (fps === null) {
+    return "unknown"
+  }
+  return fpsFits(fps) ? "good" : "slow"
 }
 
 function lightProblem(light: FrameLight): SetupProblem | null {
-  if (light.backlitShare > SETUP_BACKLIGHT_SHARE) {
+  if (!backlightFits(light.backlitShare)) {
     return "behind"
   }
-  if (light.brightness < SETUP_BRIGHTNESS_MIN) {
-    return "dark"
+  if (brightnessFits(light.brightness)) {
+    return null
   }
-  return light.brightness > SETUP_BRIGHTNESS_MAX ? "bright" : null
+  return light.brightness < SETUP_BRIGHTNESS_MIN ? "dark" : "bright"
 }
 
 export function setupRows(check: SetupCheck, at: number): Record<SetupRow, boolean> {
   const { sample } = check
   const face = sample !== null && sample.face
   return {
-    distance: face && sample.spanPx >= SETUP_MIN_FACE_SPAN_PX,
+    distance: face && spanFits(sample.spanPx),
     light: face && (sample.light === null || lightProblem(sample.light) === null),
     stillness: sample !== null && !sample.moving,
     speed: speed(check, at) === "good",
@@ -124,7 +148,7 @@ function firstProblem(check: SetupCheck, at: number): SetupProblem | null {
   if (!sample.face) {
     return "noFace"
   }
-  if (sample.spanPx < SETUP_MIN_FACE_SPAN_PX) {
+  if (!spanFits(sample.spanPx)) {
     return "far"
   }
   const light = sample.light === null ? null : lightProblem(sample.light)

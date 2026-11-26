@@ -1,11 +1,12 @@
 import { cn } from "cn"
-import { useCallback, useRef } from "react"
+import { useCallback, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { RunCamera } from "@/features/guided-capture/components/run-camera"
 import { RunPanel } from "@/features/guided-capture/components/run-panel"
 import { RunSteps } from "@/features/guided-capture/components/run-steps"
 import { useGuidedRun } from "@/features/guided-capture/hooks/use-guided-run"
 import { useHeldValue } from "@/features/guided-capture/hooks/use-held-value"
+import { CALIBRATE_FLAG } from "@/features/guided-capture/lib/calibration-readout"
 import { VIDEO_EMPTY } from "@/features/guided-capture/lib/empty-copy"
 import { sceneHint, VIDEO_HINT } from "@/features/guided-capture/lib/reading-copy"
 import {
@@ -53,6 +54,7 @@ function buttonLabel(state: GuidedState): "Start" | "Stop" | "Start again" {
 
 export function GuidedRunPage() {
   const { state, stage, videoRef, start, stop, startAnyway, chimeOn, toggleChime } = useGuidedRun()
+  const [calibrate] = useState(() => new URLSearchParams(globalThis.location.search).has(CALIBRATE_FLAG))
   const mainButtonRef = useRef<HTMLButtonElement>(null)
   const focusMainButton = useCallback(() => mainButtonRef.current?.focus(), [])
   const hint = VIDEO_HINT[useHeldValue(sceneHint(state.monitor.scene))]
@@ -100,6 +102,7 @@ export function GuidedRunPage() {
               onToggleChime={toggleChime}
               onStartAnyway={startAnyway}
               onFocusLeave={focusMainButton}
+              calibrate={calibrate}
             />
           </div>
         </div>
