@@ -1,9 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
-import { build, preview, type PreviewServer } from 'vite';
 import { SETUP_MIN_FACE_SPAN_PX } from '../src/features/guided-capture/lib/setup-check';
 import {
   advanceRun,
@@ -33,6 +28,8 @@ import {
   type Hrv,
   type Scene,
 } from './support/mock-backend';
+import { headerLogo } from './support/brand';
+import { startBuiltPreview, type BuiltPreview } from './support/built-preview';
 import { longestPathCommands, refuseCamera, setTabHidden, videoIsPlaying } from './support/page-helpers';
 
 const CHECK_SETTLE_MS = 5000;
@@ -40,8 +37,6 @@ const CHECK_SETTLED_MS = 1000;
 const START_ANYWAY_BUDGET_MS = 17000;
 
 type CheckState = { light: Light | null; scene: Scene; stepMs: number };
-
-const FRONTEND_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 const VIEWPORTS = [
   { name: 'desktop', size: { width: 1280, height: 800 } },
@@ -147,27 +142,18 @@ async function guidedLinkLost(page: Page, session: Session, close: { code: numbe
 test.describe('guided page screenshots', () => {
   test.describe.configure({ mode: 'default' });
 
-  let outDir = '';
-  let server: PreviewServer | null = null;
+  let site: BuiltPreview | null = null;
 
   test.beforeAll(async () => {
-    outDir = mkdtempSync(join(tmpdir(), 'pulse-frame-build-'));
-    await build({ root: FRONTEND_ROOT, logLevel: 'silent', build: { outDir, emptyOutDir: true } });
-    server = await preview({
-      root: FRONTEND_ROOT,
-      logLevel: 'silent',
-      build: { outDir },
-      preview: { host: '127.0.0.1', port: 0, strictPort: false },
-    });
+    site = await startBuiltPreview();
   });
 
   test.afterAll(async () => {
-    await server?.close();
-    rmSync(outDir, { recursive: true, force: true });
+    await site?.close();
   });
 
   async function openBuiltPage(page: Page): Promise<void> {
-    const url = server?.resolvedUrls?.local[0] ?? '';
+    const url = site?.url ?? '';
     expect(url).not.toBe('');
     await page.goto(url);
     await expectOnlyFakeDevices(page);
@@ -184,6 +170,22 @@ test.describe('guided page screenshots', () => {
     await expect(guided.stepList).toBeVisible();
     await expect(page.getByRole('tablist')).toHaveCount(0);
     return session;
+  }
+
+  async function headerWithLogo(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const logo = headerLogo(page);
+
+    await expect(logo.wordmark).toBeVisible();
+    await expect(logo.mark).toBeVisible();
+    expect(session.backend.connections).toEqual([]);
+    await expectOnlyMockedSockets(session);
+    await page.mouse.move(0, 0);
+    await logo.banner.screenshot({
+      path: testInfo.outputPath(`${name}.png`),
+      animations: 'disabled',
+      caret: 'hide',
+    });
   }
 
   async function guidedIdle(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -522,6 +524,7 @@ test.describe('guided page screenshots', () => {
   const farFace = faceWithSpan(SETUP_MIN_FACE_SPAN_PX / 2);
 
   const GUIDED_STATES = [
+    { state: 'header-logo', title: 'the page header with the logo', shoot: headerWithLogo },
     { state: 'idle', title: 'the guided run idle page', shoot: guidedIdle },
     {
       state: 'check-no-face',
