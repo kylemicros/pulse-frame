@@ -28,7 +28,7 @@ export function useGuidedRun() {
     } else {
       chime.close()
     }
-    dispatch({ type: "start" })
+    dispatch({ type: "start", at: performance.now() })
     const session = new MonitorSession(video, (event) => {
       if (event.type === "ended" && sessionRef.current === session) {
         sessionRef.current = null

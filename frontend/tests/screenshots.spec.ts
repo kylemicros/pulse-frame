@@ -3,6 +3,8 @@ import { SETUP_MIN_FACE_SPAN_PX } from '../src/features/guided-capture/lib/setup
 import {
   advanceRun,
   advanceRunUntil,
+  CALIBRATION_ROWS,
+  calibrationBox,
   FRAME_SPACING_MS,
   guidedPage,
   paceReplies,
@@ -35,6 +37,7 @@ import { longestPathCommands, refuseCamera, setTabHidden, videoIsPlaying } from 
 const CHECK_SETTLE_MS = 5000;
 const CHECK_SETTLED_MS = 1000;
 const START_ANYWAY_BUDGET_MS = 17000;
+const CALIBRATE_SEARCH = '?calibrate';
 
 type CheckState = { light: Light | null; scene: Scene; stepMs: number };
 
@@ -152,20 +155,20 @@ test.describe('guided page screenshots', () => {
     await site?.close();
   });
 
-  async function openBuiltPage(page: Page): Promise<void> {
+  async function openBuiltPage(page: Page, search = ''): Promise<void> {
     const url = site?.url ?? '';
     expect(url).not.toBe('');
-    await page.goto(url);
+    await page.goto(`${url}${search}`);
     await expectOnlyFakeDevices(page);
   }
 
-  async function openBuiltGuidedRun(page: Page, light: Light | null = null): Promise<Session> {
+  async function openBuiltGuidedRun(page: Page, light: Light | null = null, search = ''): Promise<Session> {
     if (light !== null) {
       await installLitCamera(page, light);
     }
     const session = await attachMockOnly(page);
     await page.clock.install();
-    await openBuiltPage(page);
+    await openBuiltPage(page, search);
     const guided = guidedPage(page);
     await expect(guided.stepList).toBeVisible();
     await expect(page.getByRole('tablist')).toHaveCount(0);
@@ -464,8 +467,8 @@ test.describe('guided page screenshots', () => {
     await capture(page, testInfo, name);
   }
 
-  async function openBuiltCheck(page: Page, check: CheckState): Promise<Session> {
-    const session = await openBuiltGuidedRun(page, check.light);
+  async function openBuiltCheck(page: Page, check: CheckState, search = ''): Promise<Session> {
+    const session = await openBuiltGuidedRun(page, check.light, search);
     session.backend.setScene(check.scene);
     await startCheckOnly(page, session);
     await pauseClock(page);
@@ -521,6 +524,69 @@ test.describe('guided page screenshots', () => {
     await capture(page, testInfo, name);
   }
 
+  async function calibrateCheck(page: Page, testInfo: TestInfo, name: string, light: Light): Promise<void> {
+    const session = await openBuiltCheck(page, { light, scene: faceScene(), stepMs: FRAME_SPACING_MS }, CALIBRATE_SEARCH);
+    const box = calibrationBox(page);
+
+    await paceReplies(page, session.backend, 2 * CHECK_SETTLED_MS);
+
+    await expect(guidedPage(page).warmUpTimer).toHaveCount(0);
+    await expect(box.region).toBeVisible();
+    await expect(box.phase('Live, setup check')).toBeVisible();
+    await expect(box.rowHeaders).toHaveText([...CALIBRATION_ROWS]);
+    await expect(box.value('Face span (px)')).toHaveText(/^\d+$/);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  function calibrateCheckGood(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return calibrateCheck(page, testInfo, name, 'even');
+  }
+
+  function calibrateCheckBehind(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return calibrateCheck(page, testInfo, name, 'behind');
+  }
+
+  async function calibrateWarmUp(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page, null, CALIBRATE_SEARCH);
+    const guided = guidedPage(page);
+    const box = calibrationBox(page);
+    await startGuidedRun(page, session);
+
+    await advanceRun(page, session.backend, 12000, 2500);
+
+    await expect(guided.warmUpTimer).toBeVisible();
+    await expect(box.phase('This run')).toBeVisible();
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function calibrateDone(page: Page, testInfo: TestInfo, name: string, last: Hrv): Promise<void> {
+    const session = await openBuiltGuidedRun(page, null, CALIBRATE_SEARCH);
+    const box = calibrationBox(page);
+
+    await runToEnd(page, session, last);
+
+    await expect(guidedPage(page).startAgain).toBeVisible();
+    await expect(box.phase('This run')).toBeVisible();
+    await expect(box.runLine).toHaveText(/^Setup check: passed after \d+ s\.$/);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  function calibrateDoneReading(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return calibrateDone(page, testInfo, name, hrv({ rmssd_ms: 41.2, sdnn_ms: 46.7, minute_bpm: 67.8, minute_count: 72 }));
+  }
+
+  function calibrateDoneNoReading(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    return calibrateDone(
+      page,
+      testInfo,
+      name,
+      hrv({ minute_count: 9, no_reading: 'READING_FLOOR_NOT_CLEARED', why: 'faint_pulse', clear_percent: 18.4 }),
+    );
+  }
+
   const farFace = faceWithSpan(SETUP_MIN_FACE_SPAN_PX / 2);
 
   const GUIDED_STATES = [
@@ -572,6 +638,19 @@ test.describe('guided page screenshots', () => {
     { state: 'unreachable', title: 'the guided run stopped because the pulse reader is unreachable', shoot: guidedUnreachable },
     { state: 'hidden-tab', title: 'the guided run stopped because the tab was hidden', shoot: guidedHiddenTab },
     { state: 'run-stopped', title: 'the guided run stopped with Stop', shoot: guidedStopped },
+    { state: 'calibrate-check', title: 'the calibration readout live during a good setup check', shoot: calibrateCheckGood },
+    {
+      state: 'calibrate-check-behind',
+      title: 'the calibration readout live with light behind the face',
+      shoot: calibrateCheckBehind,
+    },
+    { state: 'calibrate-warm-up', title: 'the calibration readout frozen during the warm-up', shoot: calibrateWarmUp },
+    { state: 'calibrate-done', title: 'the calibration readout on a result with a reading', shoot: calibrateDoneReading },
+    {
+      state: 'calibrate-no-reading',
+      title: 'the calibration readout with the clear share on a no reading result',
+      shoot: calibrateDoneNoReading,
+    },
   ] as const;
 
   for (const viewport of VIEWPORTS) {

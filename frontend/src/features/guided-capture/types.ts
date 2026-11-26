@@ -47,13 +47,22 @@ export type RunResult =
       beatToBeatMs: number | null
       overallMs: number | null
     }
-  | { kind: "none"; why: AppError }
+  | { kind: "none"; why: AppError; clearPercent: number | null }
+
+export type CheckEnd = {
+  sample: SetupSample | null
+  fps: number | null
+  how: "passed" | "anyway"
+  tookMs: number
+}
 
 export type GuidedState = {
   monitor: MonitorState
   status: RunStatus
+  pressedAt: number | null
   startedAt: number | null
   check: SetupCheck | null
+  checkEnd: CheckEnd | null
   now: number
   result: RunResult | null
   lastGoodBpm: number | null
@@ -62,7 +71,7 @@ export type GuidedState = {
 }
 
 export type GuidedAction =
-  | { type: "start" }
+  | { type: "start"; at: number }
   | { type: "session"; event: SessionEvent; at: number }
   | { type: "tick"; at: number }
   | { type: "halt"; error: AppError }

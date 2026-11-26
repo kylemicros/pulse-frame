@@ -119,8 +119,42 @@ export function guidedPage(page: Page) {
   };
 }
 
-export async function openGuidedRun(page: Page): Promise<void> {
-  await page.goto('/');
+export const CALIBRATION_ROWS = [
+  'Face span (px)',
+  'Face brightness (0 to 255)',
+  'Backlight (% near white)',
+  'Frames per second',
+] as const;
+export const CLEAR_SHARE_ROW = 'Clear share (%)';
+export type CalibrationRow = (typeof CALIBRATION_ROWS)[number] | typeof CLEAR_SHARE_ROW;
+export const CALIBRATION_NOTE = 'On for ?calibrate. Only on this screen; nothing is sent or stored.';
+export const CALIBRATION_FOOT =
+  'The first four are the last values before the warm-up. Clear share is how much of the counted part the pulse showed clearly.';
+
+export function calibrationBox(page: Page) {
+  const region = page.getByRole('main').getByRole('region', { name: 'Calibration', exact: true });
+  const table = region.getByRole('table');
+  const row = (label: CalibrationRow): Locator =>
+    table.getByRole('row').filter({ has: page.getByRole('rowheader', { name: label, exact: true }) });
+  return {
+    region,
+    table,
+    heading: region.getByRole('heading', { name: 'Calibration', exact: true }),
+    columnHeaders: table.getByRole('columnheader'),
+    rowHeaders: table.getByRole('rowheader'),
+    row,
+    value: (label: CalibrationRow): Locator => row(label).getByRole('cell').nth(0),
+    limit: (label: CalibrationRow): Locator => row(label).getByRole('cell').nth(1),
+    check: (label: CalibrationRow): Locator => row(label).getByRole('cell').nth(2),
+    phase: (text: 'Live, setup check' | 'This run'): Locator => region.getByText(text, { exact: true }),
+    note: region.getByText(CALIBRATION_NOTE, { exact: true }),
+    runLine: region.getByText(/^Setup check: /),
+    foot: region.getByText(CALIBRATION_FOOT, { exact: true }),
+  };
+}
+
+export async function openGuidedRun(page: Page, address = '/'): Promise<void> {
+  await page.goto(address);
   await expect(guidedPage(page).stepList).toBeVisible();
 }
 

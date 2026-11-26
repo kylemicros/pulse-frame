@@ -6,16 +6,19 @@ import {
   advanceSetupCheck,
   newSetupCheck,
   restartSetupSpeed,
+  setupFps,
   setupPassed,
   type SetupCheck,
 } from "@/features/guided-capture/lib/setup-check"
-import type { GuidedAction, GuidedState, MonitorState, RunResult } from "@/features/guided-capture/types"
+import type { CheckEnd, GuidedAction, GuidedState, MonitorState, RunResult } from "@/features/guided-capture/types"
 
 export const initialGuidedState: GuidedState = {
   monitor: initialMonitorState,
   status: "idle",
+  pressedAt: null,
   startedAt: null,
   check: null,
+  checkEnd: null,
   now: 0,
   result: null,
   lastGoodBpm: null,
@@ -27,7 +30,7 @@ function runResult(monitor: MonitorState, end: number): RunResult {
   const { variation } = monitor
   const last = monitor.link === "live" && variation !== null && end - variation.t <= RESULT_FRESH_MS ? variation : null
   if (last === null || last.minute_bpm === null) {
-    return { kind: "none", why: noReadingReason(last) }
+    return { kind: "none", why: noReadingReason(last), clearPercent: last?.clear_percent ?? null }
   }
   const low = last.bpm_low === null ? null : Math.floor(last.bpm_low)
   const high = last.bpm_high === null ? null : Math.ceil(last.bpm_high)
@@ -40,12 +43,18 @@ function runResult(monitor: MonitorState, end: number): RunResult {
   }
 }
 
-function beginRun(state: GuidedState, at: number): GuidedState {
-  return { ...state, status: "running", check: null, startedAt: at, now: at }
+function beginRun(state: GuidedState, check: SetupCheck, at: number, how: CheckEnd["how"]): GuidedState {
+  const checkEnd: CheckEnd = {
+    sample: check.sample,
+    fps: setupFps(check, at),
+    how,
+    tookMs: at - (state.pressedAt ?? check.startedAt),
+  }
+  return { ...state, status: "running", check: null, checkEnd, startedAt: at, now: at }
 }
 
 function checkAt(state: GuidedState, check: SetupCheck, at: number): GuidedState {
-  return setupPassed(check, at) ? beginRun(state, at) : { ...state, check, now: at }
+  return setupPassed(check, at) ? beginRun(state, check, at, "passed") : { ...state, check, now: at }
 }
 
 function tick(state: GuidedState, at: number): GuidedState {
@@ -95,7 +104,12 @@ function applySession(state: GuidedState, action: Extract<GuidedAction, { type: 
 export function guidedReducer(state: GuidedState, action: GuidedAction): GuidedState {
   switch (action.type) {
     case "start":
-      return { ...initialGuidedState, monitor: monitorReducer(state.monitor, { type: "start" }), status: "starting" }
+      return {
+        ...initialGuidedState,
+        monitor: monitorReducer(state.monitor, { type: "start" }),
+        status: "starting",
+        pressedAt: action.at,
+      }
     case "session":
       return applySession(state, action)
     case "tick":
@@ -103,7 +117,9 @@ export function guidedReducer(state: GuidedState, action: GuidedAction): GuidedS
     case "halt":
       return state.haltError === null ? { ...state, haltError: action.error } : state
     case "start-anyway":
-      return state.status === "checking" ? beginRun(state, action.at) : state
+      return state.status === "checking" && state.check !== null
+        ? beginRun(state, state.check, action.at, "anyway")
+        : state
     case "notice-expired":
       return { ...state, monitor: monitorReducer(state.monitor, action) }
   }
