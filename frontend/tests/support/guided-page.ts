@@ -171,8 +171,10 @@ export async function startRun(page: Page, backend: MockBackend): Promise<void> 
 }
 
 export async function pauseClock(page: Page): Promise<void> {
-  const now = await page.evaluate(() => Date.now());
-  await page.clock.pauseAt(now + PAUSE_AHEAD_MS);
+  const frozen = await page.evaluate(() => Date.now());
+  await page.clock.setFixedTime(frozen);
+  await page.clock.pauseAt(frozen + PAUSE_AHEAD_MS);
+  await page.clock.setSystemTime(frozen + PAUSE_AHEAD_MS);
 }
 
 async function replyToLatestFrame(page: Page, backend: MockBackend): Promise<void> {
