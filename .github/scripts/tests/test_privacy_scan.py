@@ -16,6 +16,13 @@ import privacy_scan
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = "backend/tests/fixtures/astronaut.jpg"
+ICONS = (
+    "frontend/public/apple-touch-icon.png",
+    "frontend/public/favicon.ico",
+    "frontend/public/icon-192.png",
+    "frontend/public/icon-512.png",
+    "frontend/public/icon-maskable-512.png",
+)
 
 
 def joined(*parts):
@@ -660,6 +667,20 @@ class PlantedLeakTests(unittest.TestCase):
         moved = Repo(self)
         moved.commit({"docs/astronaut.jpg": pinned}, "docs: reuse the fixture")
         self.assertEqual(found(moved.scan()), {("image", "docs/astronaut.jpg"), ("binary file", "docs/astronaut.jpg")})
+
+    def test_pinned_icons_pass_and_changed_bytes_or_an_unpinned_neighbour_are_found(self):
+        for icon in ICONS:
+            with self.subTest(icon=icon):
+                pinned = (REPO_ROOT / icon).read_bytes()
+                repo = Repo(self)
+                with_icon = repo.commit({icon: pinned}, "feat: add the icon")
+                self.assertEqual(repo.scan(), [])
+                repo.commit({icon: pinned + b"\x00"}, "feat: touch the icon")
+                self.assertEqual(found(repo.scan(base=with_icon)), {("image", icon), ("binary file", icon)})
+        neighbour = "frontend/public/icon-256.png"
+        repo = Repo(self)
+        repo.commit({neighbour: IMAGES["png"]}, "feat: add another icon")
+        self.assertEqual(found(repo.scan()), {("image", neighbour), ("binary file", neighbour)})
 
     def test_new_file_over_the_size_limit_is_found_but_an_edit_to_an_old_one_is_not(self):
         repo = Repo(self)

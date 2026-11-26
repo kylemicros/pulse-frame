@@ -1,14 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
-import { build, preview, type PreviewServer } from 'vite';
+import { startBuiltPreview, type BuiltPreview } from '../support/built-preview';
 import { guidedPage } from '../support/guided-page';
 import { MockBackend } from '../support/mock-backend';
 import { collectPageErrors, longestPathCommands, videoIsPlaying } from '../support/page-helpers';
-
-const FRONTEND_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 const EXPECTED_POLICY: Record<string, string[]> = {
   'default-src': ["'self'"],
@@ -61,26 +57,19 @@ function metaPolicies(html: string): string[] {
 }
 
 test.describe('content security policy', () => {
-  let outDir = '';
-  let server: PreviewServer | null = null;
+  let site: BuiltPreview | null = null;
 
   test.beforeAll(async () => {
-    outDir = mkdtempSync(join(tmpdir(), 'pulse-frame-build-'));
-    await build({ root: FRONTEND_ROOT, logLevel: 'silent', build: { outDir, emptyOutDir: true } });
-    server = await preview({
-      root: FRONTEND_ROOT,
-      logLevel: 'silent',
-      build: { outDir },
-      preview: { host: '127.0.0.1', port: 0, strictPort: false },
-    });
+    site = await startBuiltPreview();
   });
 
   test.afterAll(async () => {
-    await server?.close();
-    rmSync(outDir, { recursive: true, force: true });
+    await site?.close();
   });
 
   test('builds index.html with the strict content security policy', () => {
+    const outDir = site?.outDir ?? '';
+    expect(outDir).not.toBe('');
     const policies = metaPolicies(readFileSync(join(outDir, 'index.html'), 'utf8'));
 
     expect(policies).toHaveLength(1);
@@ -98,7 +87,7 @@ test.describe('content security policy', () => {
     });
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
-    const url = server?.resolvedUrls?.local[0] ?? '';
+    const url = site?.url ?? '';
     expect(url).not.toBe('');
 
     await page.goto(url);
