@@ -3,6 +3,7 @@ name = "pulse-frame"
 version = "0.1.0"
 description = "Local camera heart rate monitor backend"
 requires-python = ">=3.13,<3.14"
+license = "MIT"
 dependencies = [
     "fastapi>=0.162.0",
     "mediapipe>=1.2.2",

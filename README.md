@@ -36,3 +36,7 @@ Open the page, press Start, allow the camera and sit still. A guided run takes t
 - **MediaPipe usage logging on Linux.** MediaPipe, which finds the face, ships a usage logging client that can send usage statistics to Google, with no switch to turn it off. The privacy promise holds on macOS, where the server applies a loopback-only network sandbox at startup and the usage log goes nowhere. Linux has no such sandbox, so MediaPipe may send its usage log on any Linux run, CI included. This exception is retired once Linux runs without network access.
 - One browser tab at a time: the backend takes one connection, so a run started in a second tab stops and says the app is busy elsewhere.
 - Heart rate only, from a still face in good light. It is a side project, not a medical device.
+
+## Licence
+
+MIT, see `LICENSE`. It comes with no warranty of any kind, so do not lean on it for anything that matters to your health. The pieces it builds on keep their own licences, credited in `THIRD_PARTY_NOTICES.md`.
