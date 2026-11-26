@@ -224,10 +224,10 @@ test.describe('the side panel when the window crosses the desktop breakpoint', (
     const guided = guidedPage(page);
     const parts = shell(page);
     const region = parts.details('Setup check details');
-    const notTabStop = region.and(page.locator('[tabindex="0"]'));
+    const asTabStop = region.and(page.locator('[tabindex="0"]'));
 
     expect(await innerScrollers(page), 'inner scroll areas while stacked').toEqual([]);
-    await expect(notTabStop).toHaveCount(0);
+    await expect(asTabStop).toHaveCount(0);
 
     await page.setViewportSize({ width: 1180, height: 820 });
 
@@ -242,6 +242,10 @@ test.describe('the side panel when the window crosses the desktop breakpoint', (
     await page.setViewportSize({ width: 820, height: 1180 });
 
     await expect.poll(() => innerScrollers(page), { message: 'inner scroll areas once stacked again' }).toEqual([]);
-    await expect(notTabStop).toHaveCount(0);
+    await expect(asTabStop).toHaveCount(0);
+    await expect(
+      region.getByRole('heading', { name: 'Quick setup check', exact: true }),
+      'the title is back inside the details once stacked',
+    ).toBeVisible();
   });
 });

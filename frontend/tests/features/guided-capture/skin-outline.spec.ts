@@ -563,15 +563,18 @@ const OVERLAY_TARGETS: OverlayTarget[] = [
 ];
 const ALIGN_SLACK_PX = 3;
 const FOUR_BY_THREE = 4 / 3;
+const SIXTEEN_BY_NINE = 16 / 9;
 
 for (const viewport of [
-  { name: 'desktop', size: { width: 1280, height: 800 } },
-  { name: 'short phone', size: { width: 390, height: 300 } },
+  { name: 'tall narrow desktop', size: { width: 1024, height: 1000 } },
+  { name: 'short phone', size: { width: 390, height: 240 } },
 ] as const) {
   test.describe(`skin outline alignment at ${viewport.name} size`, () => {
     test.use({ viewport: viewport.size });
 
-    test('lands each outline on its spot in a 16:9 camera shown in a box that is not 4:3', async ({ page }) => {
+    test('lands each outline on its spot in a 16:9 camera shown in a box that is neither 16:9 nor 4:3', async ({
+      page,
+    }) => {
       await useWideCamera(page);
       const backend = await MockBackend.attach(page);
       backend.setScene(overlayScene(OVERLAY_TARGETS));
@@ -583,6 +586,7 @@ for (const viewport of [
       await expect.poll(() => guided.video.evaluate((video) => (video as HTMLVideoElement).videoWidth)).toBe(1280);
       const aspect = await aspectOf(guided.video);
       expect(Math.abs(aspect - FOUR_BY_THREE), `the camera box is ${aspect.toFixed(3)} wide per tall`).toBeGreaterThan(0.05);
+      expect(Math.abs(aspect - SIXTEEN_BY_NINE), `the camera box is ${aspect.toFixed(3)} wide per tall`).toBeGreaterThan(0.1);
       await expect
         .poll(async () =>
           (await overlayMisses(guided.video, OVERLAY_TARGETS)).filter(
