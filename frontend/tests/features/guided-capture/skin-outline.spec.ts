@@ -9,7 +9,15 @@ import {
   watchOutlineCount,
 } from '../../support/guided-page';
 import { faceScene, MockBackend, NO_FACE_SCENE, PATCH_NAMES, UNUSABLE, usable } from '../../support/mock-backend';
-import { boxOf, collectPageErrors, endVideoTracks, spyOnCamera, waitForMoreFrames } from '../../support/page-helpers';
+import {
+  boxOf,
+  collectPageErrors,
+  endVideoTracks,
+  spyOnCamera,
+  useWideCamera,
+  waitForMoreFrames,
+} from '../../support/page-helpers';
+import { aspectOf, overlayMisses, overlayScene, type OverlayTarget } from '../../support/app-shell';
 
 const OUTLINE_GREEN = 'rgb(0, 158, 115)';
 const OUTLINE_EDGE = 'rgb(20, 20, 20)';
@@ -547,3 +555,41 @@ test.describe('Skin outline button', () => {
     await expectStoresNothing(page);
   });
 });
+
+const OVERLAY_TARGETS: OverlayTarget[] = [
+  { name: 'forehead', x: 0.3, y: 0.15 },
+  { name: 'left_cheek', x: 0.72, y: 0.85 },
+  { name: 'right_cheek', x: 0.5, y: 0.5 },
+];
+const ALIGN_SLACK_PX = 3;
+const FOUR_BY_THREE = 4 / 3;
+
+for (const viewport of [
+  { name: 'desktop', size: { width: 1280, height: 800 } },
+  { name: 'short phone', size: { width: 390, height: 300 } },
+] as const) {
+  test.describe(`skin outline alignment at ${viewport.name} size`, () => {
+    test.use({ viewport: viewport.size });
+
+    test('lands each outline on its spot in a 16:9 camera shown in a box that is not 4:3', async ({ page }) => {
+      await useWideCamera(page);
+      const backend = await MockBackend.attach(page);
+      backend.setScene(overlayScene(OVERLAY_TARGETS));
+      const guided = guidedPage(page);
+      await openGuidedRun(page);
+      await guided.start.click();
+
+      await expect(guided.outlines).toHaveCount(3);
+      await expect.poll(() => guided.video.evaluate((video) => (video as HTMLVideoElement).videoWidth)).toBe(1280);
+      const aspect = await aspectOf(guided.video);
+      expect(Math.abs(aspect - FOUR_BY_THREE), `the camera box is ${aspect.toFixed(3)} wide per tall`).toBeGreaterThan(0.05);
+      await expect
+        .poll(async () =>
+          (await overlayMisses(guided.video, OVERLAY_TARGETS)).filter(
+            ({ dx, dy }) => dx > ALIGN_SLACK_PX || dy > ALIGN_SLACK_PX,
+          ),
+        )
+        .toEqual([]);
+    });
+  });
+}

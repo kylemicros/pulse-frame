@@ -15,7 +15,7 @@ const WARM_UP_MS = 60000;
 const COUNTED_MS = 90000;
 export const RUN_MS = WARM_UP_MS + COUNTED_MS;
 
-const DISCLAIMER =
+export const DISCLAIMER =
   'For wellness and curiosity only. pulse-frame is not a medical device, and its numbers are estimates.';
 export const VARIATION_LINE =
   'Both show how much the gap between your beats shifts, in ms (thousandths of a second). Compare them only with your own runs.';
@@ -114,7 +114,7 @@ export function guidedPage(page: Page) {
     milestones: main.getByTestId('milestone-status'),
     notEnoughBeats: main.getByText('Not enough beats yet', { exact: true }),
     variationLine: main.getByText(VARIATION_LINE, { exact: true }),
-    disclaimer: main.getByText(DISCLAIMER, { exact: true }),
+    disclaimer: page.getByRole('contentinfo').getByText(DISCLAIMER, { exact: true }),
     alert: main.getByRole('alert'),
   };
 }

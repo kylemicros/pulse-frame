@@ -6,4 +6,11 @@ export {
   START_FAILED,
 } from "@/features/capture/lib/camera-errors"
 export { openCamera, stopCamera } from "@/features/capture/lib/camera"
-export { createFrameCanvas, encodeFrame, FrameCaptureError } from "@/features/capture/lib/encode-frame"
+export {
+  centreCrop,
+  createFrameCanvas,
+  encodeFrame,
+  FRAME_HEIGHT,
+  FRAME_WIDTH,
+  FrameCaptureError,
+} from "@/features/capture/lib/encode-frame"

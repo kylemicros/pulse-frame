@@ -205,9 +205,6 @@ export const CAMERA_OFF_STOPPED = "Camera's off. Run stopped."
 
 export const RUN_STOPPED_TEXT = "Run stopped. Press Start again for a fresh run."
 
-export const DISCLAIMER =
-  "For wellness and curiosity only. pulse-frame is not a medical device, and its numbers are estimates."
-
 export const VARIATION_LINE =
   "Both show how much the gap between your beats shifts, in ms (thousandths of a second). Compare them only with your own runs."
 

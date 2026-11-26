@@ -45,18 +45,16 @@ import {
   type Scene,
 } from '../../support/mock-backend';
 import { boxOf, pageNow, setTabHidden } from '../../support/page-helpers';
+import { CHECK_SETTLE_MS, EARLIER, FAR_FACE, FAR_SPAN_PX } from '../../support/app-shell';
 
 const CALIBRATE = '/?calibrate';
-const SETTLE_MS = 5000;
 const SHORT_LOOK_MS = 2000;
 const START_ANYWAY_MS = 15000;
 const REDRAW_MS = 500;
 const SHADE_SLACK = 12;
 const MOST_FPS = 31;
 const MOST_LIGHT_BEHIND = 90;
-const FAR_SPAN_PX = SETUP_MIN_FACE_SPAN_PX / 2;
 const NEAR_SPAN_PX = Math.round(faceSpanPx(faceScene()));
-const FAR = faceWithSpan(FAR_SPAN_PX);
 
 const SPAN: CalibrationRow = 'Face span (px)';
 const BRIGHTNESS: CalibrationRow = 'Face brightness (0 to 255)';
@@ -82,7 +80,6 @@ const UNITS: Record<CalibrationRow, '' | '%'> = {
 
 const BOX_WORDS = /Calibration|Face span|Face brightness|Backlight|Frames per second|Waiting|Live, setup check|This run/;
 
-const EARLIER = hrv({ rmssd_ms: 39.4, sdnn_ms: 45.2, minute_bpm: 68.4, minute_count: 66 });
 const WITH_READING = hrv({ rmssd_ms: 41.2, sdnn_ms: 46.7, minute_bpm: 67.8, minute_count: 72 });
 const FAINT = hrv({ minute_count: 9, no_reading: 'READING_FLOOR_NOT_CLEARED', why: 'faint_pulse', clear_percent: 18.4 });
 const HALF_CLEAR = hrv({ minute_count: 30, no_reading: 'READING_FLOOR_NOT_CLEARED', why: 'faint_pulse', clear_percent: 50 });
@@ -238,7 +235,7 @@ test.describe('calibration readout flag', () => {
     const guided = guidedPage(page);
     const box = calibrationBox(page);
 
-    await paceUntil(page, backend, guided.headline('Looking good'), SETTLE_MS);
+    await paceUntil(page, backend, guided.headline('Looking good'), CHECK_SETTLE_MS);
 
     await expect(guided.setupCheck).toBeVisible();
     await expect(box.region).toHaveCount(0);
@@ -436,7 +433,7 @@ test.describe('calibration readout during the setup check', () => {
   }> = [
     {
       why: 'the face is too far away',
-      setup: { scene: FAR },
+      setup: { scene: FAR_FACE },
       misses: SPAN,
       status: 'Distance',
       problem: 'far',
@@ -487,7 +484,7 @@ test.describe('calibration readout during the setup check', () => {
       const guided = guidedPage(page);
       const box = calibrationBox(page);
 
-      await paceReplies(page, opened.backend, SETTLE_MS, opened.setup.stepMs);
+      await paceReplies(page, opened.backend, CHECK_SETTLE_MS, opened.setup.stepMs);
 
       await expect(box.check(misses), `${misses} check word`).toHaveText('Not yet');
       const value = await shownWhole(box.value(misses), UNITS[misses]);
@@ -502,7 +499,7 @@ test.describe('calibration readout during the setup check', () => {
   }
 
   test('updates the numbers live as the face moves in and the light changes', async ({ page }) => {
-    const { backend } = await openCheck(page, { scene: FAR });
+    const { backend } = await openCheck(page, { scene: FAR_FACE });
     const box = calibrationBox(page);
     await paceReplies(page, backend, SHORT_LOOK_MS);
     await expect(box.value(SPAN)).toHaveText(String(FAR_SPAN_PX));
@@ -548,7 +545,7 @@ test.describe('calibration readout during the setup check', () => {
   });
 
   test('announces nothing from the box and leaves focus where it was while the numbers change', async ({ page }) => {
-    const { backend } = await openCheck(page, { scene: FAR });
+    const { backend } = await openCheck(page, { scene: FAR_FACE });
     const guided = guidedPage(page);
     const box = calibrationBox(page);
     await paceReplies(page, backend, SHORT_LOOK_MS);
@@ -606,7 +603,7 @@ test.describe('calibration readout after the setup check', () => {
     const { backend } = await openCheck(page);
     const guided = guidedPage(page);
     const box = calibrationBox(page);
-    await paceUntil(page, backend, guided.headline('Looking good'), SETTLE_MS);
+    await paceUntil(page, backend, guided.headline('Looking good'), CHECK_SETTLE_MS);
     await expect(box.phase('Live, setup check')).toBeVisible();
 
     await passSetupCheck(page, backend);
@@ -640,7 +637,7 @@ test.describe('calibration readout after the setup check', () => {
   test('shows the four frozen rows and how long the check took, without a clear share, on a result with a reading', async ({
     page,
   }) => {
-    const { backend, startedBy } = await openCheck(page, { scene: FAR });
+    const { backend, startedBy } = await openCheck(page, { scene: FAR_FACE });
     const guided = guidedPage(page);
     const box = calibrationBox(page);
     await paceReplies(page, backend, 6000);
@@ -792,7 +789,7 @@ test.describe('calibration readout after the setup check', () => {
 
 test.describe('calibration readout leaving with the camera', () => {
   test('takes the box away when Stop is pressed during the check', async ({ page }) => {
-    const { backend } = await openCheck(page, { scene: FAR });
+    const { backend } = await openCheck(page, { scene: FAR_FACE });
     const guided = guidedPage(page);
     const box = calibrationBox(page);
     await paceReplies(page, backend, SHORT_LOOK_MS);
@@ -821,7 +818,7 @@ test.describe('calibration readout leaving with the camera', () => {
   });
 
   test('takes the box away when the link to the pulse reader drops during the check', async ({ page }) => {
-    const { backend } = await openCheck(page, { scene: FAR });
+    const { backend } = await openCheck(page, { scene: FAR_FACE });
     const guided = guidedPage(page);
     const box = calibrationBox(page);
     await paceReplies(page, backend, SHORT_LOOK_MS);
@@ -856,7 +853,7 @@ test.describe('calibration readout leaving with the camera', () => {
 test.describe('calibration readout layout at desktop width', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test('sits last in the side panel under the pulse trace with each value beside its label', async ({ page }) => {
+  test('sits in the side panel with each value beside its label', async ({ page }) => {
     const { backend } = await openCheck(page);
     const guided = guidedPage(page);
     const box = calibrationBox(page);
@@ -865,9 +862,7 @@ test.describe('calibration readout layout at desktop width', () => {
 
     await expect(box.region).toBeVisible();
     const region = await boxOf(box.region);
-    const trace = await boxOf(guided.pulseTrace);
     const video = await boxOf(guided.video);
-    expect(region.y, 'the box sits under the pulse trace').toBeGreaterThanOrEqual(trace.y + trace.height - 1);
     expect(region.x, 'the box sits in the side panel').toBeGreaterThanOrEqual(video.x + video.width - 1);
     for (const label of CALIBRATION_ROWS) {
       const header = await boxOf(box.row(label).getByRole('rowheader'));

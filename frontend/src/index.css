@@ -147,6 +147,29 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+@utility panel-scrollbar {
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  &::-webkit-scrollbar-track {
+    border-radius: 4px;
+    background: var(--ds-surface-2);
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+    background: var(--ds-edge);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ds-edge) var(--ds-surface-2);
+  }
+}
+
+@utility px-safe-* {
+  padding-left: max(calc(var(--spacing) * --value(integer)), env(safe-area-inset-left));
+  padding-right: max(calc(var(--spacing) * --value(integer)), env(safe-area-inset-right));
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -156,5 +179,10 @@
   }
   html {
     @apply font-mono;
+    --phone-bar-space: calc(6rem + env(safe-area-inset-bottom));
+    scroll-padding-bottom: var(--phone-bar-space);
+    @variant md {
+      scroll-padding-bottom: 0;
+    }
   }
 }
