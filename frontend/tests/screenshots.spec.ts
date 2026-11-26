@@ -30,6 +30,15 @@ import {
   type Scene,
 } from './support/mock-backend';
 import { headerLogo } from './support/brand';
+import {
+  chooseTheme,
+  openSettings,
+  PAGE_BACKGROUND,
+  pageBackground,
+  setSetting,
+  settingsPanel,
+  tabTo,
+} from './support/settings';
 import { startBuiltPreview, type BuiltPreview } from './support/built-preview';
 import { longestPathCommands, refuseCamera, setTabHidden, videoIsPlaying } from './support/page-helpers';
 
@@ -108,6 +117,10 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
     animations: 'disabled',
     caret: 'hide',
   });
+}
+
+function dropFocus(page: Page): Promise<void> {
+  return page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 }
 
 async function startCheckOnly(page: Page, session: Session): Promise<void> {
@@ -205,8 +218,7 @@ test.describe('guided page screenshots', () => {
     const guided = guidedPage(page);
 
     await expect(guided.start).toBeVisible();
-    await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
+    await expect(guided.lock).toBeVisible();
     await expect(guided.outlines).toHaveCount(0);
     expect(session.backend.connections).toEqual([]);
     await expectOnlyMockedSockets(session);
@@ -223,7 +235,6 @@ test.describe('guided page screenshots', () => {
     await expect(guided.warmUpTimer).toBeVisible();
     await expect(guided.settleBar).toBeVisible();
     await expect.poll(() => videoIsPlaying(guided.video)).toBe(true);
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
     await expect(guided.outlines).toHaveCount(3);
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
@@ -236,10 +247,10 @@ test.describe('guided page screenshots', () => {
     await advanceRun(page, session.backend, 12000, 2500);
     await expect(guided.outlines).toHaveCount(3);
 
-    await guided.skinOutline.click();
+    await setSetting(page, 'Skin outline', false);
+    await dropFocus(page);
     await advanceRun(page, session.backend, 1000, 250);
 
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'false');
     await expect(guided.outlines).toHaveCount(0);
     await expect.poll(() => videoIsPlaying(guided.video)).toBe(true);
     await expectOnlyMockedSockets(session);
@@ -639,8 +650,58 @@ test.describe('guided page screenshots', () => {
     );
   }
 
+  async function settingsOpenIdle(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const settings = settingsPanel(page);
+
+    await openSettings(page);
+
+    await expect(settings.skinOutline).toBeChecked();
+    await expect(settings.privacy).toBeVisible();
+    expect(session.backend.connections).toEqual([]);
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function settingsOpenCounting(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    await reachCalibrateCounting(page);
+    const settings = settingsPanel(page);
+
+    await openSettings(page);
+
+    await expect(settings.calibrationNumbers).toBeChecked();
+    await expect(settings.privacy).toBeVisible();
+    await capture(page, testInfo, name);
+  }
+
+  async function lockWordsShown(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+
+    await tabTo(page, guided.lock);
+
+    await expect(guided.lockWords).toBeVisible();
+    await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function themeDarkChosen(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+
+    await chooseTheme(page, 'Dark');
+    await dropFocus(page);
+
+    await expect.poll(() => pageBackground(page)).toBe(PAGE_BACKGROUND.dark);
+    expect(session.backend.connections).toEqual([]);
+    await capture(page, testInfo, name);
+  }
+
   const GUIDED_STATES = [
     { state: 'header-logo', title: 'the page header with the logo', shoot: headerWithLogo },
+    { state: 'settings-open', title: 'Settings open on the idle page', shoot: settingsOpenIdle },
+    { state: 'settings-open-counting', title: 'Settings open mid-run while counting', shoot: settingsOpenCounting },
+    { state: 'lock-words', title: 'the camera lock showing its words on keyboard focus', shoot: lockWordsShown },
+    { state: 'theme-dark-chosen', title: 'the page with Dark chosen in Settings', shoot: themeDarkChosen },
     { state: 'idle', title: 'the guided run idle page', shoot: guidedIdle },
     {
       state: 'check-no-face',

@@ -49,7 +49,15 @@ export function useGuidedRun() {
 
   const startAnyway = useCallback(() => dispatch({ type: "start-anyway", at: performance.now() }), [])
 
-  const toggleChime = useCallback(() => setChimeOn((on) => !on), [])
+  const setChime = useCallback(
+    (on: boolean) => {
+      setChimeOn(on)
+      if (on && sessionRef.current !== null) {
+        chime.prepare()
+      }
+    },
+    [chime],
+  )
 
   useEffect(() => {
     const leaveWhenHidden = () => {
@@ -128,5 +136,5 @@ export function useGuidedRun() {
     return () => globalThis.clearTimeout(timer)
   }, [noticeId])
 
-  return { state, stage, videoRef, start, stop, startAnyway, chimeOn, toggleChime }
+  return { state, stage, videoRef, start, stop, startAnyway, chimeOn, setChime }
 }

@@ -18,6 +18,7 @@ import {
   waitForMoreFrames,
 } from '../../support/page-helpers';
 import { aspectOf, overlayMisses, overlayScene, type OverlayTarget } from '../../support/app-shell';
+import { expectSetting, openSettings, setSetting, SETTING_LINES, settingsPanel } from '../../support/settings';
 
 const OUTLINE_GREEN = 'rgb(0, 158, 115)';
 const OUTLINE_EDGE = 'rgb(20, 20, 20)';
@@ -129,18 +130,6 @@ async function expectHeldAtLeast400ms(page: Page): Promise<void> {
   expect(gaps.filter((gap) => gap < HOLD_MS - HOLD_SLACK_MS), 'outline changes held under 400 ms').toEqual([]);
 }
 
-async function placeUnderCamera(page: Page): Promise<{ left: number; gap: number; width: number; height: number }> {
-  const guided = guidedPage(page);
-  const camera = await boxOf(guided.video);
-  const button = await boxOf(guided.skinOutline);
-  return {
-    left: Math.round(button.x - camera.x),
-    gap: Math.round(button.y - (camera.y + camera.height)),
-    width: Math.round(button.width),
-    height: Math.round(button.height),
-  };
-}
-
 async function expectStoresNothing(page: Page): Promise<void> {
   const stored = await page.evaluate(async () => ({
     local: localStorage.length,
@@ -219,7 +208,7 @@ test.describe('skin outline on the guided camera', () => {
     await openGuidedRun(page);
 
     await expect(guided.start).toBeVisible();
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
+    await expectSetting(page, 'Skin outline', true);
     await expect(guided.outlines).toHaveCount(0);
     expect(backend.connections).toEqual([]);
   });
@@ -275,7 +264,7 @@ test.describe('skin outline on the guided camera', () => {
       expect(await drawnAfterFaceGuide(guided.outline(name))).toBe(true);
     }
 
-    await guided.skinOutline.click();
+    await setSetting(page, 'Skin outline', false);
     await expect(guided.outlines).toHaveCount(0);
 
     expect(await faceGuide(guided.video)).toEqual({ guides: 1, dashed: true });
@@ -290,9 +279,9 @@ test.describe('skin outline on the guided camera', () => {
     page.on('request', (request) => requests.push(`${request.method()} ${request.url()}`));
     const connections = backend.connections.length;
 
-    await guided.skinOutline.click();
+    await setSetting(page, 'Skin outline', false);
     await expect(guided.outlines).toHaveCount(0);
-    await guided.skinOutline.click();
+    await setSetting(page, 'Skin outline', true);
     await expect(guided.outlines).toHaveCount(3);
     await waitForMoreFrames(backend, 5);
 
@@ -311,7 +300,7 @@ test.describe('skin outline on the guided camera', () => {
     backend.setScene(NO_FACE_SCENE);
 
     await expect(guided.outlines).toHaveCount(0);
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
+    await expectSetting(page, 'Skin outline', true);
   });
 
   test('mirrors the outline like the camera preview', async ({ page }) => {
@@ -425,83 +414,65 @@ test.describe('skin outline on the guided camera', () => {
   });
 });
 
-test.describe('Skin outline button', () => {
-  test('sits under the camera, left aligned and at least 44 px high, on by default', async ({ page }) => {
+test.describe('Skin outline switch in Settings', () => {
+  test('is a labelled switch in Settings, on by default, with no outline button left on the page', async ({ page }) => {
     await MockBackend.attach(page);
     const guided = guidedPage(page);
+    const settings = settingsPanel(page);
 
     await openGuidedRun(page);
 
-    await expect(guided.skinOutline).toBeVisible();
-    await expect(guided.skinOutline).toHaveAccessibleName('Skin outline: on');
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
-    await expect(guided.skinOutline).toBeEnabled();
-    expect(await guided.skinOutline.evaluate((element) => element.tagName)).toBe('BUTTON');
-    const camera = await boxOf(guided.video);
-    const button = await boxOf(guided.skinOutline);
-    expect(button.y).toBeGreaterThanOrEqual(camera.y + camera.height - 1);
-    expect(Math.abs(button.x - camera.x)).toBeLessThanOrEqual(2);
-    expect(button.height).toBeGreaterThanOrEqual(44);
+    await expect(guided.main.getByRole('button', { name: /Skin outline/ })).toHaveCount(0);
+    await expect(guided.main.getByRole('switch')).toHaveCount(0);
+    await openSettings(page);
+    await expect(settings.skinOutline).toBeVisible();
+    await expect(settings.skinOutline).toBeChecked();
+    await expect(settings.skinOutline).toBeEnabled();
+    await expect(settings.dialog.getByText(SETTING_LINES['Skin outline'], { exact: true })).toBeVisible();
   });
 
-  test('stays in the same place under the camera through the warm-up and after Stop', async ({ page }) => {
-    await page.clock.install();
+  test('turns the outline off and on from Settings while the run is live', async ({ page }) => {
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
-    await openGuidedRun(page);
-    await expect(guided.skinOutline).toBeVisible();
-    const idle = await placeUnderCamera(page);
-
-    await guided.start.click();
-    await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
-    await passSetupCheck(page, backend);
-    await expect(guided.skinOutline).toBeVisible();
-    expect(await placeUnderCamera(page)).toEqual(idle);
-
-    await guided.stop.click();
-    await expect(guided.startAgain).toBeVisible();
-    await expect(guided.skinOutline).toBeVisible();
-    expect(await placeUnderCamera(page)).toEqual(idle);
-  });
-
-  test('turns the outline off and on with a click while the run is live', async ({ page }) => {
-    const backend = await MockBackend.attach(page);
-    const guided = guidedPage(page);
+    const settings = settingsPanel(page);
     await startRun(page, backend);
     await expect(guided.outlines).toHaveCount(3);
+    await openSettings(page);
 
-    await guided.skinOutline.click();
+    await settings.skinOutline.click();
 
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'false');
-    await expect(guided.skinOutline).toHaveAccessibleName('Skin outline: off');
+    await expect(settings.skinOutline).not.toBeChecked();
+    await expect(settings.skinOutline.getByText('Off', { exact: true })).toBeVisible();
     await expect(guided.outlines).toHaveCount(0);
     await waitForMoreFrames(backend, 10);
     await expect(guided.outlines).toHaveCount(0);
 
-    await guided.skinOutline.click();
+    await settings.skinOutline.click();
 
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
-    await expect(guided.skinOutline).toHaveAccessibleName('Skin outline: on');
+    await expect(settings.skinOutline).toBeChecked();
+    await expect(settings.skinOutline.getByText('On', { exact: true })).toBeVisible();
     await expect(guided.outlines).toHaveCount(3);
   });
 
   test('flips with Enter and with Space and keeps focus', async ({ page }) => {
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
+    const settings = settingsPanel(page);
     await startRun(page, backend);
     await expect(guided.outlines).toHaveCount(3);
-    await guided.skinOutline.focus();
+    await openSettings(page);
+    await settings.skinOutline.focus();
 
     await page.keyboard.press('Enter');
 
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'false');
-    await expect(guided.skinOutline).toBeFocused();
+    await expect(settings.skinOutline).not.toBeChecked();
+    await expect(settings.skinOutline).toBeFocused();
     await expect(guided.outlines).toHaveCount(0);
 
     await page.keyboard.press('Space');
 
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
-    await expect(guided.skinOutline).toBeFocused();
+    await expect(settings.skinOutline).toBeChecked();
+    await expect(settings.skinOutline).toBeFocused();
     await expect(guided.outlines).toHaveCount(3);
   });
 
@@ -510,10 +481,9 @@ test.describe('Skin outline button', () => {
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
     await openGuidedRun(page);
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
+    await expectSetting(page, 'Skin outline', true);
 
-    await guided.skinOutline.click();
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'false');
+    await setSetting(page, 'Skin outline', false);
     await guided.start.click();
 
     await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
@@ -524,34 +494,31 @@ test.describe('Skin outline button', () => {
 
     await guided.stop.click();
     await expect(guided.startAgain).toBeVisible();
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'false');
+    await expectSetting(page, 'Skin outline', false);
     const framesBefore = backend.frames.length;
     await guided.startAgain.click();
 
     await expect.poll(() => backend.frames.length).toBeGreaterThan(framesBefore + 1);
     await waitForMoreFrames(backend, 10);
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'false');
     await expect(guided.outlines).toHaveCount(0);
+    await expectSetting(page, 'Skin outline', false);
 
-    await guided.skinOutline.click();
+    await setSetting(page, 'Skin outline', true);
 
     await expect(guided.outlines).toHaveCount(3);
   });
 
   test('is back on after a reload and stores nothing in the browser', async ({ page }) => {
     await MockBackend.attach(page);
-    const guided = guidedPage(page);
     await openGuidedRun(page);
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
+    await expectSetting(page, 'Skin outline', true);
 
-    await guided.skinOutline.click();
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'false');
+    await setSetting(page, 'Skin outline', false);
     await expectStoresNothing(page);
 
     await page.reload();
 
-    await expect(guided.skinOutline).toHaveAttribute('aria-pressed', 'true');
-    await expect(guided.skinOutline).toHaveAccessibleName('Skin outline: on');
+    await expectSetting(page, 'Skin outline', true);
     await expectStoresNothing(page);
   });
 });

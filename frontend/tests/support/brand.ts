@@ -23,8 +23,8 @@ export function headerLogo(page: Page) {
   const banner = page.getByRole('banner');
   return {
     banner,
-    wordmark: banner.getByRole('heading', { level: 1, name: 'pulse-frame', exact: true }),
-    mark: banner.locator('svg[aria-hidden="true"]'),
+    wordmark: banner.getByRole('heading', { level: 1, name: 'pulse frame', exact: true }),
+    mark: banner.getByTestId('brand-mark'),
   };
 }
 

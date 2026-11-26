@@ -54,10 +54,10 @@ async function expectFillsWindowWithoutPageScroll(page: Page, state: GuidedState
 }
 
 test.describe('app shell', () => {
-  test('shows the pulse-frame page title', async ({ page }) => {
+  test('shows the pulse frame page title', async ({ page }) => {
     await page.goto('/');
 
-    await expect(page).toHaveTitle('pulse-frame');
+    await expect(page).toHaveTitle('pulse frame');
   });
 
   test('attaches the root element the app mounts into', async ({ page }) => {

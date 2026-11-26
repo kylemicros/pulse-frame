@@ -29,6 +29,19 @@ export function runStage(state: GuidedState): Stage {
   return elapsedMs(state) < WARM_UP_MS ? "warm-up" : "counted"
 }
 
+export function stoppedStage(state: GuidedState): Stage | null {
+  if (state.status === "idle" && state.checkStopped) {
+    return "get-comfy"
+  }
+  if (state.status !== "stopped") {
+    return null
+  }
+  if (state.startedAt === null) {
+    return "get-comfy"
+  }
+  return state.now - state.startedAt < WARM_UP_MS ? "warm-up" : "counted"
+}
+
 export function secondsLeft(stage: Stage, elapsed: number): number {
   const end = stage === "warm-up" ? WARM_UP_MS : RUN_MS
   return Math.max(0, Math.ceil((end - elapsed) / 1000))

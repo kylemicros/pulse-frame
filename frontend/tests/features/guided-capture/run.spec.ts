@@ -20,7 +20,6 @@ test.describe('guided run phases', () => {
 
     await startRun(page, backend);
 
-    await expect(guided.phaseLine('Step 2 of 4, warm-up')).toBeVisible();
     await expectCurrentStep(page, 'Warm-up');
     await expect(guided.headline('Stay in frame. No need to watch.')).toBeVisible();
     await expect(guided.warmUpTimer).toHaveText(/^\d+ s$/);
@@ -87,7 +86,6 @@ test.describe('guided run phases', () => {
     await advanceRun(page, backend, 7000, 1000);
 
     await expectCurrentStep(page, 'Counted');
-    await expect(guided.phaseLine('Step 3 of 4, counted')).toBeVisible();
     await expect(guided.headline('Counting. Hold still.')).toBeVisible();
     await expect(guided.warmUpBar).toHaveAttribute('aria-valuenow', '100');
     await expect(guided.warmUpTimer).toHaveCount(0);
@@ -121,7 +119,6 @@ test.describe('guided run phases', () => {
     await advanceRun(page, backend, 8000, 1000);
 
     await expectCurrentStep(page, 'Result');
-    await expect(guided.phaseLine('Step 4 of 4, result')).toBeVisible();
     await expect(guided.countedTimer).toHaveCount(0);
     await expect(guided.startAgain).toBeVisible();
     await expect(guided.stop).toHaveCount(0);

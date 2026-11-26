@@ -4,6 +4,7 @@ import {
   ALL_GOOD_PROMPT,
   announcements,
   expectCurrentStep,
+  expectStoppedStep,
   FRAME_SPACING_MS,
   guidedPage,
   LONG_STEP_MS,
@@ -30,6 +31,7 @@ import {
 import { installLitCamera, showLight, type Light } from '../../support/lit-camera';
 import { faceScene, faceWithSpan, MockBackend, NO_FACE_SCENE, type Scene } from '../../support/mock-backend';
 import { boxOf, endVideoTracks, failFrameEncoding, pageNow, spyOnCamera } from '../../support/page-helpers';
+import { settingsPanel } from '../../support/settings';
 import { socketRecords } from '../../support/socket-recorder';
 
 type PixelReadWindow = Window & { pixelReads: { count: number } };
@@ -201,7 +203,6 @@ test.describe('setup check before the guided run', () => {
 
     await paceReplies(page, backend, SETTLE_MS);
 
-    await expect(guided.phaseLine('Step 1 of 4, get comfy')).toBeVisible();
     await expectCurrentStep(page, 'Get comfy');
     await expect(guided.headline('Quick setup check')).toBeVisible();
     await expect(
@@ -353,7 +354,8 @@ test.describe('setup check before the guided run', () => {
     await expect(guided.startAnywayWait).toHaveAttribute('aria-valuemax', '100');
     await expect(guided.startAnywayWait).toHaveAttribute('aria-valuetext', /^\d+ seconds to go$/);
     await expect(guided.startAnyway).toHaveCount(0);
-    await guided.skinOutline.focus();
+    await expect(settingsPanel(page).gear).toBeVisible();
+    await settingsPanel(page).gear.focus();
 
     await paceUntilPageTime(page, backend, startedBy + START_ANYWAY_MS - 1500, LONG_STEP_MS);
     await expect(guided.startAnyway).toHaveCount(0);
@@ -364,13 +366,13 @@ test.describe('setup check before the guided run', () => {
       "Can't fix it right now? You can start anyway. The reading may come out weaker.",
     );
     await expect(guided.startAnywayWait).toHaveCount(0);
-    await expect(guided.skinOutline).toBeFocused();
+    await expect(settingsPanel(page).gear).toBeFocused();
 
     await paceReplies(page, backend, 3000, LONG_STEP_MS);
     expect(await timesSaid(page, START_ANYWAY_SAID)).toBe(1);
     expect((await announcements(page)).filter((said) => /shows up in/.test(said.text)), 'countdown spoken').toEqual([]);
     await expect(guided.setupPrompt).toHaveText(startsWith(SETUP_PROMPTS.behind.prompt));
-    await expect(guided.skinOutline).toBeFocused();
+    await expect(settingsPanel(page).gear).toBeFocused();
     await expectCurrentStep(page, 'Get comfy');
   });
 
@@ -447,7 +449,9 @@ test.describe('setup check before the guided run', () => {
     await expectCurrentStep(page, 'Warm-up');
   });
 
-  test('goes back to idle with the camera off when Stop is pressed during the check', async ({ page }) => {
+  test('goes back to Start with the camera off and the first step marked Stopped when Stop is pressed during the check', async ({
+    page,
+  }) => {
     const { backend } = await openCheck(page, { scene: FAR });
     const guided = guidedPage(page);
     await paceReplies(page, backend, 1000);
@@ -461,7 +465,7 @@ test.describe('setup check before the guided run', () => {
     await expect(guided.main.getByText(RUN_STOPPED_TEXT, { exact: true })).toHaveCount(0);
     await expect(guided.main.getByText("Camera's off. Press Start and your face shows up here.")).toBeVisible();
     await expect(guided.setupCheck).toHaveCount(0);
-    await expectCurrentStep(page, 'Get comfy');
+    await expectStoppedStep(page, 'Get comfy');
     await expect.poll(() => backend.openConnections().length).toBe(0);
   });
 

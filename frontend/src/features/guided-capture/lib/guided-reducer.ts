@@ -24,6 +24,7 @@ export const initialGuidedState: GuidedState = {
   lastGoodBpm: null,
   haltError: null,
   endError: null,
+  checkStopped: false,
 }
 
 function runResult(monitor: MonitorState, end: number): RunResult {
@@ -84,7 +85,8 @@ function applySession(state: GuidedState, action: Extract<GuidedAction, { type: 
     const endError = event.error ?? state.haltError
     const checkFailed = state.status === "checking" && event.error !== null
     const stopped = state.status === "running" || checkFailed || state.haltError !== null
-    return { ...state, monitor, status: stopped ? "stopped" : "idle", check: null, endError, haltError: null }
+    const checkStopped = !stopped && state.status === "checking" && endError === null
+    return { ...state, monitor, status: stopped ? "stopped" : "idle", check: null, endError, haltError: null, checkStopped }
   }
   if (event.type === "link" && event.status !== "live" && state.check !== null) {
     return { ...state, monitor, check: advanceSetupCheck(restartSetupSpeed(state.check), action.at) }

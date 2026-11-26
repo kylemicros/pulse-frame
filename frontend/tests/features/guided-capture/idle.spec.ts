@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { expectCurrentStep, guidedPage, openGuidedRun } from '../../support/guided-page';
 import { MockBackend } from '../../support/mock-backend';
+import { openSettings, settingsPanel } from '../../support/settings';
 import { cameraCalls, holdCamera, releaseCamera, spyOnCamera, videoIsPlaying } from '../../support/page-helpers';
 
 test.describe('guided run before Start', () => {
@@ -10,7 +11,6 @@ test.describe('guided run before Start', () => {
 
     await openGuidedRun(page);
 
-    await expect(guided.phaseLine('Step 1 of 4, get comfy')).toBeVisible();
     await expectCurrentStep(page, 'Get comfy');
     await expect(guided.step('Warm-up')).toContainText('60 s');
     await expect(guided.step('Counted')).toContainText('90 s');
@@ -26,19 +26,20 @@ test.describe('guided run before Start', () => {
     await expect(guided.stop).toHaveCount(0);
   });
 
-  test('has the chime toggle on by default and turns it off and on with aria-pressed', async ({ page }) => {
+  test('has the Chime switch on by default in Settings and turns it off and on', async ({ page }) => {
     await MockBackend.attach(page);
-    const guided = guidedPage(page);
+    const settings = settingsPanel(page);
 
     await openGuidedRun(page);
+    await openSettings(page);
 
-    await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
-    await expect(guided.chime).toHaveAccessibleName('Chime at start and end: on');
-    await guided.chime.click();
-    await expect(guided.chime).toHaveAttribute('aria-pressed', 'false');
-    await expect(guided.chime).toHaveAccessibleName('Chime at start and end: off');
-    await guided.chime.click();
-    await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
+    await expect(settings.chime).toBeChecked();
+    await expect(settings.chime.getByText('On', { exact: true })).toBeVisible();
+    await settings.chime.click();
+    await expect(settings.chime).not.toBeChecked();
+    await expect(settings.chime.getByText('Off', { exact: true })).toBeVisible();
+    await settings.chime.click();
+    await expect(settings.chime).toBeChecked();
   });
 
   test('says the camera is waking up while it starts, then shows the camera', async ({ page }) => {

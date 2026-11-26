@@ -8,7 +8,6 @@ import { RunProgress } from "@/features/guided-capture/components/run-progress"
 import { RunResults } from "@/features/guided-capture/components/run-results"
 import { SetupCheckPrompt } from "@/features/guided-capture/components/setup-check-prompt"
 import { SetupCheckStatus } from "@/features/guided-capture/components/setup-check-status"
-import { ToggleButton } from "@/features/guided-capture/components/toggle-button"
 import { WATCH_TIP } from "@/features/guided-capture/lib/run-copy"
 import type { GuidedState, Stage } from "@/features/guided-capture/types"
 
@@ -19,8 +18,6 @@ type RunPanelProps = {
   stage: Stage
   elapsed: number
   hint: string | null
-  chimeOn: boolean
-  onToggleChime: () => void
   onStartAnyway: () => void
   onFocusLeave: () => void
   calibrate: boolean
@@ -32,8 +29,6 @@ export function RunPanel({
   stage,
   elapsed,
   hint,
-  chimeOn,
-  onToggleChime,
   onStartAnyway,
   onFocusLeave,
   calibrate,
@@ -158,7 +153,6 @@ export function RunPanel({
         <>
           <RunPlanList />
           <p>Leave your watch alone during the run. Check its history afterwards.</p>
-          <ToggleButton label="Chime at start and end" pressed={chimeOn} onToggle={onToggleChime} />
           <RunResults result={null} />
         </>
       }

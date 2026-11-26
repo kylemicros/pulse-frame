@@ -68,6 +68,7 @@ export type GuidedState = {
   lastGoodBpm: number | null
   haltError: AppError | null
   endError: AppError | null
+  checkStopped: boolean
 }
 
 export type GuidedAction =
