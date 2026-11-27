@@ -4,7 +4,6 @@ import {
   advanceRunUntil,
   expectCurrentStep,
   expectQuietRef,
-  FACE_A_WINDOW_CUE,
   guidedPage,
   openGuidedRun,
   pushAndConfirm,
@@ -23,6 +22,7 @@ import {
   watchedText,
   watchText,
 } from '../../support/page-helpers';
+import { drawnTexts, expectNoResultTiles } from '../../support/result-states';
 
 const ANOTHER_CONNECTION_OPEN = { code: 1013, reason: 'ANOTHER_CONNECTION_OPEN' };
 const DROPPED = { code: 1006 };
@@ -68,10 +68,10 @@ test.describe('guided run interruptions', () => {
     expect(lines.at(-1)).toBe('Ref: CAMERA_DENIED');
     expect(lines.slice(0, -1).join(' ')).not.toMatch(CODED_ALERT_TEXT);
     await expect(guided.main.getByText("Camera's off. The browser said no.")).toBeVisible();
-    await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+    expect(await drawnTexts(guided.cameraBox), 'words drawn on the camera box').toEqual(["Camera's off. The browser said no."]);
     await expectCurrentStep(page, 'Get comfy');
     await expect(guided.start).toBeVisible();
-    await expect(guided.notEnoughBeats).toHaveCount(2);
+    await expectNoResultTiles(page);
   });
 
   const cameraCases = [
@@ -99,19 +99,19 @@ test.describe('guided run interruptions', () => {
   ] as const;
 
   for (const camera of cameraCases) {
-    test(`shows the plain ${camera.code} text with its camera line, a quiet Ref and no window cue`, async ({ page }) => {
+    test(`shows the plain ${camera.code} text, a quiet Ref and only its camera line on the camera box`, async ({ page }) => {
       await camera.refuse(page);
       await MockBackend.attach(page);
       const guided = guidedPage(page);
       await openGuidedRun(page);
-      await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toBeVisible();
+      expect(await drawnTexts(guided.cameraBox), 'words drawn on the camera box').toEqual([]);
 
       await guided.start.click();
 
       await expectQuietRef(guided.main, camera.message, camera.code);
       await expect(guided.main.getByText(camera.action)).toBeVisible();
       await expect(guided.main.getByText(camera.cameraLine, { exact: true })).toBeVisible();
-      await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+      expect(await drawnTexts(guided.cameraBox), 'words drawn on the camera box').toEqual([camera.cameraLine]);
       await expectCurrentStep(page, 'Get comfy');
     });
   }
@@ -133,7 +133,7 @@ test.describe('guided run interruptions', () => {
     await expectQuietRef(guided.main, BUSY_MESSAGE, 'SOCKET_BUSY');
     await expect(guided.main.getByText(BUSY_ACTION)).toBeVisible();
     await expect(guided.main.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
-    await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+    expect(await drawnTexts(guided.cameraBox), 'words drawn on the camera box').toEqual([CAMERA_OFF_STOPPED]);
     await expectCameraAndSocketClosed(page, backend);
     await expectNoResultLater(page, backend);
   });
@@ -156,7 +156,7 @@ test.describe('guided run interruptions', () => {
     await expect(guided.main.getByText(UNREACHABLE_ACTION)).toBeVisible();
     await expect(guided.main).not.toContainText(/backend|127\.0\.0\.1|uv run|python/i);
     await expect(guided.main.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
-    await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+    expect(await drawnTexts(guided.cameraBox), 'words drawn on the camera box').toEqual([CAMERA_OFF_STOPPED]);
     await expectCameraAndSocketClosed(page, backend);
     await expectNoResultLater(page, backend);
   });
@@ -180,7 +180,7 @@ test.describe('guided run interruptions', () => {
     await expect(guided.main).toContainText('Keep this tab in front for the whole run, then press Start again.');
     await expectQuietRef(guided.main, 'The page was hidden, so the run stopped.', 'PAGE_HIDDEN');
     await expect(guided.main.getByText(CAMERA_OFF_STOPPED, { exact: true })).toBeVisible();
-    await expect(guided.main.getByText(FACE_A_WINDOW_CUE)).toHaveCount(0);
+    expect(await drawnTexts(guided.cameraBox), 'words drawn on the camera box').toEqual([CAMERA_OFF_STOPPED]);
     await expect(guided.startAgain).toBeVisible();
     await expect(guided.stop).toHaveCount(0);
     await expect(guided.countedTimer).toHaveCount(0);

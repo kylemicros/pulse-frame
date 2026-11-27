@@ -99,7 +99,7 @@ async function openAt(page: Page, address: string): Promise<MockBackend> {
   return backend;
 }
 
-async function startRunAt(page: Page, address: string): Promise<MockBackend> {
+export async function startRunAt(page: Page, address: string): Promise<MockBackend> {
   const backend = await openAt(page, address);
   await guidedPage(page).start.click();
   await expect.poll(() => backend.frames.length).toBeGreaterThan(1);

@@ -230,11 +230,9 @@ export const VARIATION_WINDOW: Record<Exclude<Stage, "get-comfy">, Record<Variat
 
 export const LIVE_WINDOW_TEXT = "Last 20 s"
 
-export const CAMERA_CUE: Record<Stage, string> = {
-  "get-comfy": "Face a window so the light is even.",
+export const CAMERA_CUE: Partial<Record<Stage, string>> = {
   "warm-up": "Keep your face in the oval. Look wherever you like.",
   counted: "Hold still. Shoulders loose, hands in your lap.",
-  result: "You can move now. Stretch, even.",
 }
 
 export const CAMERA_OFF_DONE = "Camera's off. Run finished."

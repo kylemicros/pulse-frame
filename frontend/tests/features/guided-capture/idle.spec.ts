@@ -3,9 +3,12 @@ import { expectCurrentStep, guidedPage, openGuidedRun } from '../../support/guid
 import { MockBackend } from '../../support/mock-backend';
 import { openSettings, settingsPanel } from '../../support/settings';
 import { cameraCalls, holdCamera, releaseCamera, spyOnCamera, videoIsPlaying } from '../../support/page-helpers';
+import { expectNoResultTiles, idleHeadline, OLD_IDLE_CAMERA_LINE } from '../../support/result-states';
 
 test.describe('guided run before Start', () => {
-  test('shows the idle page with step 1 current, the plan and empty readings in words', async ({ page }) => {
+  test('shows the idle page with step 1 current, the plan, the idle headline and no empty readings', async ({
+    page,
+  }) => {
     await MockBackend.attach(page);
     const guided = guidedPage(page);
 
@@ -15,12 +18,9 @@ test.describe('guided run before Start', () => {
     await expect(guided.step('Warm-up')).toContainText('60 s');
     await expect(guided.step('Counted')).toContainText('90 s');
     await expect(guided.headline('Two and a half minutes, mostly doing nothing.')).toBeVisible();
-    await expect(guided.main.getByText("Camera's off. Press Start and your face shows up here.")).toBeVisible();
-    await expect(guided.main.getByText('No reading yet', { exact: true })).toBeVisible();
-    await expect(guided.main.getByText('Beat to beat variation', { exact: true })).toBeVisible();
-    await expect(guided.main.getByText('Overall rhythm variation', { exact: true })).toBeVisible();
-    await expect(guided.notEnoughBeats).toHaveCount(2);
-    await expect(guided.variationLine).toBeVisible();
+    await expect(idleHeadline(page)).toBeVisible();
+    await expect(guided.main.getByText(OLD_IDLE_CAMERA_LINE)).toHaveCount(0);
+    await expectNoResultTiles(page);
     await expect(guided.disclaimer).toBeVisible();
     await expect(guided.start).toBeVisible();
     await expect(guided.stop).toHaveCount(0);
@@ -53,7 +53,7 @@ test.describe('guided run before Start', () => {
     await guided.start.click();
 
     await expect(waking).toBeVisible();
-    await expect(guided.main.getByText("Camera's off. Press Start and your face shows up here.")).toHaveCount(0);
+    await expect(guided.main.getByText(OLD_IDLE_CAMERA_LINE)).toHaveCount(0);
 
     await releaseCamera(page);
 

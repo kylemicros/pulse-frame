@@ -7,8 +7,10 @@ import type { FrameMessage } from "@/lib/socket/messages"
 type RunCameraProps = {
   videoRef: RefObject<HTMLVideoElement | null>
   live: boolean
+  shown: boolean
   scene: FrameMessage | null
   offText: string | null
+  hiddenLabel: string | null
   cue: string | null
   setupCue: string | null
   outlineOn: boolean
@@ -18,7 +20,17 @@ type SourceSize = { width: number; height: number }
 
 const PLANNED_SIZE: SourceSize = { width: FRAME_WIDTH, height: FRAME_HEIGHT }
 
-export function RunCamera({ videoRef, live, scene, offText, cue, setupCue, outlineOn }: RunCameraProps) {
+export function RunCamera({
+  videoRef,
+  live,
+  shown,
+  scene,
+  offText,
+  hiddenLabel,
+  cue,
+  setupCue,
+  outlineOn,
+}: RunCameraProps) {
   const [source, setSource] = useState(PLANNED_SIZE)
   const readSize = (event: SyntheticEvent<HTMLVideoElement>) => {
     const { videoWidth, videoHeight } = event.currentTarget
@@ -55,6 +67,7 @@ export function RunCamera({ videoRef, live, scene, offText, cue, setupCue, outli
         {offText === null ? null : (
           <p className="pointer-events-none absolute inset-x-4 top-16.5 text-sm text-(--ds-cam-text)">{offText}</p>
         )}
+        {hiddenLabel === null ? null : <p className="sr-only">{hiddenLabel}</p>}
         {setupCue === null ? null : (
           <p
             aria-hidden="true"
@@ -68,7 +81,7 @@ export function RunCamera({ videoRef, live, scene, offText, cue, setupCue, outli
             {cue}
           </p>
         )}
-        <PrivacyLock />
+        <PrivacyLock shown={shown} />
       </div>
     </div>
   )

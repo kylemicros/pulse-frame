@@ -5,7 +5,6 @@ import { PulseTrace } from "@/features/guided-capture/components/pulse-trace"
 import { RunAlerts } from "@/features/guided-capture/components/run-alerts"
 import { RunPlanList } from "@/features/guided-capture/components/run-plan-list"
 import { RunProgress } from "@/features/guided-capture/components/run-progress"
-import { RunResults } from "@/features/guided-capture/components/run-results"
 import { SetupCheckPrompt } from "@/features/guided-capture/components/setup-check-prompt"
 import { SetupCheckStatus } from "@/features/guided-capture/components/setup-check-status"
 import { WATCH_TIP } from "@/features/guided-capture/lib/run-copy"
@@ -117,7 +116,6 @@ export function RunPanel({
         main={
           <>
             {reading ? <p>90 seconds of holding still, which is harder than it sounds.</p> : null}
-            <RunResults result={result} />
             {reading ? (
               <p>{WATCH_TIP}</p>
             ) : (
@@ -134,12 +132,7 @@ export function RunPanel({
       <PanelLayout
         label="Run details"
         wide={wide}
-        main={
-          <>
-            <RunAlerts errors={[state.endError]} />
-            <RunResults result={null} />
-          </>
-        }
+        main={<RunAlerts errors={[state.endError]} />}
         readout={null}
       />
     )
@@ -153,7 +146,6 @@ export function RunPanel({
         <>
           <RunPlanList />
           <p>Leave your watch alone during the run. Check its history afterwards.</p>
-          <RunResults result={null} />
         </>
       }
       readout={null}

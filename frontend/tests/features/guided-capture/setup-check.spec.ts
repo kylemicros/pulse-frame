@@ -30,7 +30,15 @@ import {
 } from '../../support/guided-page';
 import { installLitCamera, showLight, type Light } from '../../support/lit-camera';
 import { faceScene, faceWithSpan, MockBackend, NO_FACE_SCENE, type Scene } from '../../support/mock-backend';
-import { boxOf, endVideoTracks, failFrameEncoding, pageNow, spyOnCamera } from '../../support/page-helpers';
+import {
+  boxOf,
+  cameraTrackStates,
+  endVideoTracks,
+  failFrameEncoding,
+  pageNow,
+  spyOnCamera,
+} from '../../support/page-helpers';
+import { IDLE_CAMERA_LABEL, idleHeadline, OLD_IDLE_CAMERA_LINE } from '../../support/result-states';
 import { settingsPanel } from '../../support/settings';
 import { socketRecords } from '../../support/socket-recorder';
 
@@ -97,9 +105,16 @@ const TWO_PROBLEMS: Array<{ first: SetupProblem; second: SetupProblem; setup: Pa
   { first: 'slow', second: 'moving', setup: { stepMs: SLOW_STEP_MS, scene: MOVING }, notYet: ['Camera speed', 'Stillness'] },
 ];
 
-async function openCheck(page: Page, change: Partial<Setup> = {}): Promise<{ backend: MockBackend; setup: Setup }> {
+async function openCheck(
+  page: Page,
+  change: Partial<Setup> = {},
+  spyCamera = false,
+): Promise<{ backend: MockBackend; setup: Setup }> {
   const setup = { ...GOOD, ...change };
   await installLitCamera(page, setup.light);
+  if (spyCamera) {
+    await spyOnCamera(page);
+  }
   await recordAnnouncements(page);
   await recordTextOf(page, 'setup-prompt');
   const backend = await MockBackend.attach(page);
@@ -452,18 +467,23 @@ test.describe('setup check before the guided run', () => {
   test('goes back to Start with the camera off and the first step marked Stopped when Stop is pressed during the check', async ({
     page,
   }) => {
-    const { backend } = await openCheck(page, { scene: FAR });
+    const { backend } = await openCheck(page, { scene: FAR }, true);
     const guided = guidedPage(page);
     await paceReplies(page, backend, 1000);
     await expect(guided.setupCheck).toBeVisible();
+    await expect.poll(() => cameraTrackStates(page)).toContain('live');
 
     await guided.stop.click();
     await page.clock.runFor(500);
 
+    await expect.poll(() => cameraTrackStates(page)).toEqual(expect.arrayContaining(['ended']));
+    expect((await cameraTrackStates(page)).every((state) => state === 'ended')).toBe(true);
+    await expect(guided.cameraBox.getByText(IDLE_CAMERA_LABEL, { exact: true })).toHaveCount(1);
     await expect(guided.start).toBeVisible();
     await expect(guided.startAgain).toHaveCount(0);
     await expect(guided.main.getByText(RUN_STOPPED_TEXT, { exact: true })).toHaveCount(0);
-    await expect(guided.main.getByText("Camera's off. Press Start and your face shows up here.")).toBeVisible();
+    await expect(guided.main.getByText(OLD_IDLE_CAMERA_LINE)).toHaveCount(0);
+    await expect(idleHeadline(page)).toBeVisible();
     await expect(guided.setupCheck).toHaveCount(0);
     await expectStoppedStep(page, 'Get comfy');
     await expect.poll(() => backend.openConnections().length).toBe(0);
