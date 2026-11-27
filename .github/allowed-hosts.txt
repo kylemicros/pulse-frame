@@ -4,6 +4,7 @@ clerk.com
 code.claude.com
 developer.chrome.com
 developer.mozilla.org
+developers.cloudflare.com
 developers.google.com
 docs.astral.sh
 docs.github.com
@@ -14,6 +15,7 @@ github.com
 huggingface.co
 oxc.rs
 platform.claude.com
+pulse-frame.kylemicros.workers.dev
 pyodide.org
 pypi.org
 raw.githubusercontent.com
