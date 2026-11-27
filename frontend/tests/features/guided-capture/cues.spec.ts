@@ -7,8 +7,12 @@ import {
   expectCurrentStep,
   guidedPage,
   openGuidedRun,
+  paceUntil,
+  paceUntilPageTime,
   passSetupCheck,
+  pauseClock,
   pushAndConfirm,
+  RUN_MS,
   soundsPlayed,
   spyOnAudioClose,
   spyOnSounds,
@@ -29,6 +33,19 @@ const MILESTONES = [
 
 const MILESTONE_AT_MS = [0, 50000, 60000, 105000, 140000, 150000];
 const SLICE_MS = 2500;
+const COUNTING_AT_MS = MILESTONE_AT_MS[2];
+const COARSE_STEP_MS = 5000;
+const FINE_STEP_MS = 200;
+
+async function paceIntoCounting(page: Page, backend: MockBackend, warmUpAt: number): Promise<void> {
+  await pauseClock(page);
+  await paceUntilPageTime(page, backend, warmUpAt + COUNTING_AT_MS - 2 * COARSE_STEP_MS, COARSE_STEP_MS);
+  await paceUntil(page, backend, guidedPage(page).countedTimer, 3 * COARSE_STEP_MS, FINE_STEP_MS);
+}
+
+async function paceUntilDone(page: Page, backend: MockBackend): Promise<void> {
+  await paceUntil(page, backend, guidedPage(page).startAgain, RUN_MS, COARSE_STEP_MS);
+}
 
 async function runWithSteadyReadings(page: Page, backend: MockBackend): Promise<void> {
   const guided = guidedPage(page);
@@ -102,13 +119,14 @@ test.describe('guided run cues', () => {
     await guided.start.click();
     await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
     await passSetupCheck(page, backend);
+    const warmUpAt = await pageNow(page);
     const duringWarmUp = await soundsPlayed(page);
 
-    await advanceRunUntil(page, backend, guided.countedTimer, 1000);
+    await paceIntoCounting(page, backend, warmUpAt);
     await expect.poll(() => soundsPlayed(page)).toBeGreaterThan(duringWarmUp);
     const duringCounting = await soundsPlayed(page);
 
-    await advanceRunUntil(page, backend, guided.startAgain);
+    await paceUntilDone(page, backend);
     await expect.poll(() => soundsPlayed(page)).toBeGreaterThan(duringCounting);
   });
 
@@ -241,15 +259,16 @@ test.describe('guided run cues', () => {
     await guided.start.click();
     await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
     await passSetupCheck(page, backend);
+    const warmUpAt = await pageNow(page);
     await advanceRun(page, backend, 5000);
     expect(await soundsPlayed(page), 'sounds while the chime was off').toBe(0);
 
     await setSetting(page, 'Chime', true);
 
-    await advanceRunUntil(page, backend, guided.countedTimer, 1000);
+    await paceIntoCounting(page, backend, warmUpAt);
     await expect.poll(() => soundsPlayed(page)).toBeGreaterThan(0);
     const atCounting = await soundsPlayed(page);
-    await advanceRunUntil(page, backend, guided.startAgain);
+    await paceUntilDone(page, backend);
     await expect.poll(() => soundsPlayed(page)).toBeGreaterThan(atCounting);
   });
 
@@ -265,8 +284,9 @@ test.describe('guided run cues', () => {
     await setSetting(page, 'Chime', false);
     const atOff = await soundsPlayed(page);
 
-    await advanceRunUntil(page, backend, guided.countedTimer, 1000);
-    await advanceRunUntil(page, backend, guided.startAgain);
+    await pauseClock(page);
+    await paceUntil(page, backend, guided.countedTimer, RUN_MS, COARSE_STEP_MS);
+    await paceUntilDone(page, backend);
     await expect(guided.headline('Done, but no reading this time.')).toBeVisible();
     expect(await soundsPlayed(page), 'sounds after the chime was turned off').toBe(atOff);
   });

@@ -52,6 +52,7 @@ const CALIBRATE = '/?calibrate';
 const SHORT_LOOK_MS = 2000;
 const START_ANYWAY_MS = 15000;
 const REDRAW_MS = 500;
+const SPEED_WINDOW_MS = 1000;
 const SHADE_SLACK = 12;
 const MOST_FPS = 31;
 const MOST_LIGHT_BEHIND = 90;
@@ -773,7 +774,8 @@ test.describe('calibration readout after the setup check', () => {
     const { backend } = await openCheck(page, { scene: NO_FACE_SCENE });
     const guided = guidedPage(page);
     const box = calibrationBox(page);
-    await paceUntil(page, backend, guided.startAnyway, START_ANYWAY_MS + 2000);
+    await paceUntil(page, backend, guided.startAnyway, START_ANYWAY_MS + 2000, LONG_STEP_MS);
+    await paceReplies(page, backend, SPEED_WINDOW_MS + REDRAW_MS);
 
     await guided.startAnyway.click();
     await paceReplies(page, backend, 2 * REDRAW_MS);
