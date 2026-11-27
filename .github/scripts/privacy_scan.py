@@ -15,6 +15,7 @@ PINNED_IMAGES = {
     "frontend/public/icon-192.png": "db49e49d692db8f6f436b26fc6ed8113961be2520c72ccc2fa28b21b1fd6b0c8",
     "frontend/public/icon-512.png": "0ca61627a4ce15ffd76c2380f3d07a6c1cfe4bcd1de4d5b8a78885bbc9d3aaea",
     "frontend/public/icon-maskable-512.png": "b6b8f28d9aad84a19795ef7689fda42225192d161541270541a68c5e81fc9663",
+    "showcase/sample-result.png": "36706f564363a82978b61492d1f8cb613a6d5304b0810648b6defe4687046a86",
 }
 DATA_SUFFIXES = {
     ".npz",

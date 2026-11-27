@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { cspViolations, recordCspViolations, startBuiltPreview, type BuiltPreview } from '../support/built-preview';
+import { parsePolicy, sortedPolicy } from '../support/csp-policy';
 import { guidedPage } from '../support/guided-page';
 import { MockBackend } from '../support/mock-backend';
 import { collectPageErrors, longestPathCommands, videoIsPlaying } from '../support/page-helpers';
@@ -17,20 +18,6 @@ const EXPECTED_POLICY: Record<string, string[]> = {
   'base-uri': ["'none'"],
   'form-action': ["'none'"],
 };
-
-function parsePolicy(policy: string): Record<string, string[]> {
-  return Object.fromEntries(
-    policy
-      .split(';')
-      .map((directive) => directive.trim().split(/\s+/))
-      .filter((tokens) => tokens[0] !== '')
-      .map(([name, ...sources]) => [name, sources.toSorted()]),
-  );
-}
-
-function sortedPolicy(policy: Record<string, string[]>): Record<string, string[]> {
-  return Object.fromEntries(Object.entries(policy).map(([name, sources]) => [name, sources.toSorted()]));
-}
 
 const HTML_ENTITIES: Record<string, string> = {
   '&#39;': "'",
