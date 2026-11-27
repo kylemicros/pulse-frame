@@ -34,6 +34,30 @@ async function rectsOf(items: Locator[]): Promise<Rect[]> {
   return Promise.all(items.map((item) => rectOf(item)));
 }
 
+async function pressAndSettle(page: Page, region: Locator, key: string): Promise<number> {
+  const watch = await region.evaluateHandle((element) => {
+    const seen = { ended: false };
+    element.addEventListener(
+      'scrollend',
+      () => {
+        seen.ended = true;
+      },
+      { once: true },
+    );
+    return seen;
+  });
+  await page.keyboard.press(key);
+  await expect
+    .poll(() => watch.evaluate((seen) => seen.ended), { message: `the scroll area finished scrolling after ${key}` })
+    .toBe(true);
+  await watch.dispose();
+  return scrollTopOf(region);
+}
+
+function viewHeightOf(region: Locator): Promise<number> {
+  return region.evaluate((element) => element.clientHeight);
+}
+
 async function expectStillAfterScroll(page: Page, region: Locator, items: Locator[]): Promise<void> {
   const before = await rectsOf(items);
   await scrollRegionTo(region, 'end');
@@ -124,12 +148,16 @@ test.describe('the side panel scroll area at desktop size', () => {
     await region.focus();
     await expect(region).toBeFocused();
 
-    await page.keyboard.press('End');
-    await expect.poll(() => scrollTopOf(region)).toBeGreaterThanOrEqual(max - 1);
-    await page.keyboard.press('Home');
-    await expect.poll(() => scrollTopOf(region)).toBe(0);
-    await page.keyboard.press('PageDown');
-    await expect.poll(() => scrollTopOf(region)).toBeGreaterThan(0);
+    expect(await pressAndSettle(page, region, 'End'), 'the position after End').toBe(max);
+    await expect(region).toBeFocused();
+    expect(await pressAndSettle(page, region, 'Home'), 'the position after Home').toBe(0);
+    await expect(region).toBeFocused();
+    const view = await viewHeightOf(region);
+    const paged = await pressAndSettle(page, region, 'PageDown');
+    expect(paged, 'Page Down moves more than half the visible height').toBeGreaterThan(view / 2);
+    expect(paged, 'Page Down moves at most one visible height').toBeLessThanOrEqual(view);
+    expect(paged, 'Page Down stops short of the end').toBeLessThan(max);
+    await expect(region).toBeFocused();
     expect((await pageExtent(page)).scrollY).toBe(0);
   });
 
