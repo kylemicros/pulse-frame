@@ -61,7 +61,9 @@
   --ds-done: #007a5a;
   --ds-primary-bg: #1a1a1a;
   --ds-primary-text: #ffffff;
+  --ds-primary-hover: #3a3a3a;
   --ds-alert-bg: #fff4ef;
+  --ds-alert-edge: #8a2c00;
   --ds-cam-bg: #e8e8e6;
   --ds-cam-text: #3d3d3d;
 }
@@ -103,10 +105,10 @@
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
     --ds-bg: #141414;
-    --ds-surface: #1f1f1f;
-    --ds-surface-2: #2a2a2a;
+    --ds-surface: #222222;
+    --ds-surface-2: #303030;
     --ds-text: #f5f5f5;
-    --ds-muted: #b3b3b3;
+    --ds-muted: #bdbdbd;
     --ds-border: #5c5c5c;
     --ds-edge: #8f8f8f;
     --ds-track: #2e2e2e;
@@ -115,7 +117,9 @@
     --ds-done: #009e73;
     --ds-primary-bg: #f0f0f0;
     --ds-primary-text: #141414;
+    --ds-primary-hover: #d0d0d0;
     --ds-alert-bg: #2b1d17;
+    --ds-alert-edge: #ffb08a;
     --ds-cam-bg: #2a2a2a;
     --ds-cam-text: #d4d4d4;
   }
@@ -162,6 +166,24 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@theme {
+  --animate-phase-in: fade-in 180ms ease-out;
+  --animate-phase-out: fade-out 180ms ease-in forwards;
+  --animate-quick-in: fade-in 120ms ease-out;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes fade-out {
+    to {
+      opacity: 0;
+    }
+  }
 }
 
 @utility panel-scrollbar {

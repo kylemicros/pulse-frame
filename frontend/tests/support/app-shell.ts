@@ -4,6 +4,7 @@ import {
   advanceRun,
   advanceRunUntil,
   calibrationBox,
+  drawnPrompt,
   FRAME_SPACING_MS,
   guidedPage,
   openGuidedRun,
@@ -124,7 +125,7 @@ export async function reachFarCheck(page: Page, stepMs = FRAME_SPACING_MS): Prom
   await guidedPage(page).start.click();
   await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
   await pauseClock(page);
-  const prompt = guidedPage(page).setupPrompt.getByText(SETUP_PROMPTS.far.prompt, { exact: true });
+  const prompt = drawnPrompt(page, SETUP_PROMPTS.far.prompt);
   await paceUntil(page, backend, prompt, CHECK_SETTLE_MS, stepMs);
   await paceReplies(page, backend, CHECK_SETTLED_MS, stepMs);
   await expect(guidedPage(page).headline('Quick setup check')).toBeVisible();

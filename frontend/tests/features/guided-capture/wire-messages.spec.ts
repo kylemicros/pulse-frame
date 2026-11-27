@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
 import {
   advanceRun,
+  advanceRunUntil,
   expectCurrentStep,
   expectQuietRef,
   guidedPage,
+  pauseClock,
   startRun,
   timerSeconds,
 } from '../../support/guided-page';
@@ -11,6 +13,8 @@ import { MockBackend, WIRE_ERRORS } from '../../support/mock-backend';
 import { waitForMoreFrames } from '../../support/page-helpers';
 
 const NOTICE_SHOWN_MS = 5000;
+const NOTICE_LEAD_S = 3;
+const NOTICE_STEP_MS = 250;
 const CARRIES_ON = 'Nothing to do; the run carries on.';
 const UNKNOWN_WIRE_ERROR = {
   code: 'READER_HICCUP',
@@ -134,6 +138,35 @@ test.describe('guided run wire messages', () => {
     await expect(guided.main.getByText(CARRIES_ON)).toBeVisible();
     await expect(guided.main).not.toContainText(/Traceback|pulse_frame|uvicorn|reload flag/);
     await expectCurrentStep(page, 'Warm-up');
+  });
+
+  test('keeps the same single alert for a wire notice that shows from the warm-up into counting', async ({ page }) => {
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
+    await pauseClock(page);
+    const left = await timerSeconds(guided.warmUpTimer);
+    await advanceRun(page, backend, (left - NOTICE_LEAD_S) * 1000, 2500);
+    await expect(guided.warmUpTimer).toBeVisible();
+    const notice = guided.alert.filter({ hasText: 'Ref: RATE_LIMITED' });
+
+    backend.replyNextWithError(WIRE_ERRORS.RATE_LIMITED);
+    await advanceRunUntil(page, backend, notice, NOTICE_STEP_MS, NOTICE_STEP_MS * 4);
+    await expect(guided.warmUpTimer).toBeVisible();
+    await notice.evaluate((element) => Object.defineProperty(globalThis, 'noticeNode', { value: element }));
+
+    await advanceRunUntil(page, backend, guided.countedTimer, NOTICE_STEP_MS, NOTICE_SHOWN_MS);
+
+    await expect(guided.headline('Counting. Hold still.')).toBeVisible();
+    await expect(notice).toBeVisible();
+    await expect(guided.main.getByRole('alert')).toHaveCount(1);
+    expect(
+      await notice.evaluate(
+        (element) => element.isConnected && element === (globalThis as unknown as { noticeNode: Element }).noticeNode,
+      ),
+      'the notice is the same element it was in the warm-up',
+    ).toBe(true);
   });
 
   test('clears a wire notice after the notice time while the run carries on', async ({ page }) => {

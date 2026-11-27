@@ -20,7 +20,7 @@ import {
 import { aspectOf, overlayMisses, overlayScene, type OverlayTarget } from '../../support/app-shell';
 import { expectSetting, openSettings, setSetting, SETTING_LINES, settingsPanel } from '../../support/settings';
 
-const OUTLINE_GREEN = 'rgb(0, 158, 115)';
+const OUTLINE_WHITE = 'rgb(255, 255, 255)';
 const OUTLINE_EDGE = 'rgb(20, 20, 20)';
 const HOLD_MS = 400;
 const HOLD_SLACK_MS = 20;
@@ -145,7 +145,7 @@ test.describe('skin outline on the guided camera', () => {
     test.describe(`in the ${colorScheme} theme`, () => {
       test.use({ colorScheme });
 
-      test('draws one green 2 px line over a 5 px dark edge for each usable patch, inside the camera', async ({
+      test('draws one white 2 px line over a 5 px dark edge for each usable patch, inside the camera', async ({
         page,
       }) => {
         const backend = await MockBackend.attach(page);
@@ -163,7 +163,7 @@ test.describe('skin outline on the guided camera', () => {
           expect(box.x + box.width).toBeLessThanOrEqual(video.x + video.width);
           expect(box.y + box.height).toBeLessThanOrEqual(video.y + video.height);
           expect(await paintOf(line)).toEqual({
-            stroke: OUTLINE_GREEN,
+            stroke: OUTLINE_WHITE,
             strokeWidth: '2px',
             fill: 'none',
             linejoin: 'round',

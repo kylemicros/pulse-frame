@@ -96,7 +96,7 @@ export function PrivacyLock({ shown: lockShown }: PrivacyLockProps) {
         aria-hidden="true"
         className={
           shown
-            ? "ml-1.5 rounded-md bg-(--ds-text) px-2.5 py-1 font-sans text-sm/snug font-semibold whitespace-nowrap text-(--ds-bg) shadow-[0_4px_12px_rgba(0,0,0,0.2)]"
+            ? "ml-1.5 animate-quick-in rounded-md bg-(--ds-text) px-2.5 py-1 font-sans text-sm/snug font-semibold whitespace-nowrap text-(--ds-bg) shadow-[0_4px_12px_rgba(0,0,0,0.2)] motion-reduce:animate-none"
             : "hidden"
         }
       >

@@ -42,14 +42,12 @@ const SCHEME_MEDIA: Record<Scheme, string> = {
 let schemeMetas: readonly { scheme: Scheme; meta: HTMLMetaElement }[] | null = null
 
 function themeColorMetas(): readonly { scheme: Scheme; meta: HTMLMetaElement }[] {
-  schemeMetas ??= Array.from(document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')).flatMap(
-    (meta): { scheme: Scheme; meta: HTMLMetaElement }[] => {
-      if (meta.media === SCHEME_MEDIA.light) {
-        return [{ scheme: "light", meta }]
-      }
-      return meta.media === SCHEME_MEDIA.dark ? [{ scheme: "dark", meta }] : []
-    },
-  )
+  schemeMetas ??= Array.from(
+    document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"][data-scheme]'),
+  ).flatMap((meta): { scheme: Scheme; meta: HTMLMetaElement }[] => {
+    const { scheme } = meta.dataset
+    return scheme === "light" || scheme === "dark" ? [{ scheme, meta }] : []
+  })
   return schemeMetas
 }
 

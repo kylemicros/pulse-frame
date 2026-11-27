@@ -21,6 +21,7 @@ type RunPanelProps = {
   onFocusLeave: () => void
   calibrate: boolean
   wide: boolean
+  cuesUnderCamera: boolean
 }
 
 export function RunPanel({
@@ -32,11 +33,13 @@ export function RunPanel({
   onFocusLeave,
   calibrate,
   wide,
+  cuesUnderCamera,
 }: RunPanelProps) {
   const readout = calibrate ? (
     <CalibrationReadout check={state.check} now={state.now} checkEnd={state.checkEnd} result={state.result} />
   ) : null
   const trace = wide ? null : <PulseTrace samples={state.monitor.samples} />
+  const liveAlerts = <RunAlerts errors={[state.monitor.error, state.monitor.notice]} />
   if (state.status === "checking" && state.check !== null) {
     return (
       <PanelLayout
@@ -45,10 +48,10 @@ export function RunPanel({
         head={
           <>
             <h2 className={HEADLINE}>{state.check.shown === "allGood" ? "Looking good" : "Quick setup check"}</h2>
-            <SetupCheckPrompt check={state.check} now={state.now} />
-            <RunAlerts errors={[state.monitor.error, state.monitor.notice]} />
+            <SetupCheckPrompt check={state.check} now={state.now} cuesUnderCamera={cuesUnderCamera} />
           </>
         }
+        alerts={liveAlerts}
         main={
           <SetupCheckStatus
             check={state.check}
@@ -87,9 +90,9 @@ export function RunPanel({
                 {hint}
               </p>
             )}
-            <RunAlerts errors={[state.monitor.error, state.monitor.notice]} />
           </>
         }
+        alerts={liveAlerts}
         side={
           <>
             <LiveReadings monitor={state.monitor} lastGoodBpm={state.lastGoodBpm} stage={stage} />

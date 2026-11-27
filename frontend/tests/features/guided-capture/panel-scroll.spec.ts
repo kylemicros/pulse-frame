@@ -13,10 +13,13 @@ import {
   scrollRegionTo,
   scrollTopOf,
   shell,
+  startRunAt,
   TOP_FADE_PX,
   type Rect,
 } from '../../support/app-shell';
-import { calibrationBox, guidedPage } from '../../support/guided-page';
+import { advanceRunUntil, calibrationBox, guidedPage, pushAndConfirm } from '../../support/guided-page';
+
+const GROWTH_PX = 400;
 
 async function expectPinnedAbove(item: Locator, region: Locator, panel: Locator, name: string): Promise<void> {
   await expect(item, `${name} is shown`).toBeVisible();
@@ -213,6 +216,27 @@ test.describe('the side panel scroll area on a tall desktop', () => {
     expect(fits.topCovers).toBe(false);
     expect(fits.bottomCovers).toBe(false);
     await expect(region).not.toHaveAttribute('tabindex', '0');
+  });
+
+  test('makes the details a tab stop when their content grows past the area after a phase change', async ({ page }) => {
+    const backend = await startRunAt(page, '/');
+    const guided = guidedPage(page);
+    await pushAndConfirm(page, backend, { bpm: 68.2, quality_db: 9.4, state: 'ok' });
+    await advanceRunUntil(page, backend, guided.countedTimer);
+    const region = shell(page).details('Counting details');
+    await expect(region).toBeVisible();
+    expect(await maxScrollOf(region), 'the counting content fits a 2000 px tall window').toBeLessThanOrEqual(0);
+    await expect(region).not.toHaveAttribute('tabindex', '0');
+
+    await region.evaluate((element, growth) => {
+      const content = element.firstElementChild;
+      if (content instanceof HTMLElement) {
+        content.style.minHeight = `${element.clientHeight + growth}px`;
+      }
+    }, GROWTH_PX);
+
+    await expect.poll(() => maxScrollOf(region), { message: 'the grown content overflows' }).toBeGreaterThan(0);
+    await expect(region).toHaveAttribute('tabindex', '0');
   });
 });
 

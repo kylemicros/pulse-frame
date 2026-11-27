@@ -32,7 +32,7 @@ export function StartAnyway({ elapsed, onStartAnyway, onFocusLeave }: StartAnywa
         <Button
           variant="outline"
           onClick={onStartAnyway}
-          className="h-auto min-h-11 self-start rounded-md border-(--ds-edge) bg-(--ds-surface) px-3.5 text-base font-semibold text-(--ds-text) focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-(--ds-count) dark:border-(--ds-edge) dark:bg-(--ds-surface)"
+          className="h-auto min-h-11 self-start rounded-md border-(--ds-edge) bg-(--ds-surface) px-3.5 text-base font-semibold text-(--ds-text) hover:bg-(--ds-surface-2) hover:text-(--ds-text) motion-reduce:transition-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-(--ds-count) dark:border-(--ds-edge) dark:bg-(--ds-surface) dark:hover:bg-(--ds-surface-2)"
         >
           Start anyway
         </Button>

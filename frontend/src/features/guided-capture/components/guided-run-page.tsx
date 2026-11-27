@@ -1,11 +1,12 @@
 import { cn } from "cn"
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { useCallback, useLayoutEffect, useRef, useState, type AnimationEvent, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { PulseTrace } from "@/features/guided-capture/components/pulse-trace"
 import { RunCamera } from "@/features/guided-capture/components/run-camera"
 import { RunPanel } from "@/features/guided-capture/components/run-panel"
 import { RunResults } from "@/features/guided-capture/components/run-results"
 import { RunSteps } from "@/features/guided-capture/components/run-steps"
+import { SetupPromptBox } from "@/features/guided-capture/components/setup-prompt-box"
 import { SettingsMenu, type SettingSwitchItem } from "@/features/settings"
 import { useGuidedRun } from "@/features/guided-capture/hooks/use-guided-run"
 import { useHeldValue } from "@/features/guided-capture/hooks/use-held-value"
@@ -74,6 +75,7 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
   const stoppedLine = state.status === "stopped" && state.endError === null
   const camOn = state.status === "checking" || state.status === "running"
   const setupCue = state.check === null ? null : setupPromptText(state.check)
+  const cue = refShown || state.check !== null ? null : (CAMERA_CUE[stage] ?? null)
   const idle = state.status === "idle" && state.endError === null
   const result = stage === "result" ? state.result : null
   const errorShown = state.endError !== null && result === null
@@ -84,6 +86,17 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
   )
   const alertFirst = !wide && errorShown
   const resultShown = result !== null
+  const [cameraGone, setCameraGone] = useState(false)
+  const [hadResult, setHadResult] = useState(resultShown)
+  if (hadResult !== resultShown) {
+    setHadResult(resultShown)
+    setCameraGone(false)
+  }
+  const hideCamera = (event: AnimationEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      setCameraGone(true)
+    }
+  }
   useLayoutEffect(() => {
     if (resultShown && cameraHomeRef.current?.contains(document.activeElement)) {
       focusMainButton()
@@ -106,6 +119,7 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
         onStartAnyway={startAnyway}
         onFocusLeave={focusMainButton}
         calibrate={calibrate && calibrationOn}
+        cuesUnderCamera={!tabletUp}
       />
     </div>
   )
@@ -133,7 +147,7 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
     <Button
       ref={mainButtonRef}
       onClick={label === "Stop" ? stop : start}
-      className="h-auto min-h-11 w-full rounded-md border-2 border-(--ds-primary-bg) bg-(--ds-primary-bg) px-5 py-2.5 font-sans text-base font-bold text-(--ds-primary-text) hover:bg-(--ds-primary-bg) hover:opacity-90 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-(--ds-count) md:w-auto md:min-w-40"
+      className="h-auto min-h-11 w-full rounded-md border-2 border-(--ds-primary-bg) bg-(--ds-primary-bg) px-5 py-2.5 font-sans text-base font-bold text-(--ds-primary-text) hover:border-(--ds-primary-hover) hover:bg-(--ds-primary-hover) motion-reduce:transition-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-(--ds-count) md:w-auto md:min-w-40"
     >
       {label}
     </Button>
@@ -170,13 +184,21 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
             {alertFirst ? panel : null}
             <div
               className={cn(
-                "flex min-w-0 flex-col gap-3 lg:grid lg:min-h-0",
+                "relative flex min-w-0 flex-col gap-3 lg:grid lg:min-h-0",
                 result === null ? "lg:grid-rows-[minmax(0,1fr)_auto]" : "lg:grid-rows-[minmax(0,1fr)]",
               )}
             >
               <div
                 ref={cameraHomeRef}
-                className={cn("min-w-0 lg:min-h-0 lg:@container-size", result !== null && "hidden")}
+                inert={resultShown}
+                onAnimationEnd={hideCamera}
+                className={cn(
+                  "min-w-0 lg:min-h-0 lg:@container-size",
+                  resultShown &&
+                    (cameraGone
+                      ? "hidden"
+                      : "pointer-events-none absolute inset-x-0 top-0 animate-phase-out motion-reduce:hidden lg:bottom-[calc(--spacing(32)+--spacing(3))]"),
+                )}
               >
                 <RunCamera
                   videoRef={videoRef}
@@ -185,11 +207,19 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
                   scene={camOn ? state.monitor.scene : null}
                   offText={cameraOffText(state, stage)}
                   hiddenLabel={idle ? IDLE_CAMERA_LABEL : null}
-                  cue={refShown || state.check !== null ? null : (CAMERA_CUE[stage] ?? null)}
-                  setupCue={setupCue}
+                  cue={tabletUp ? cue : null}
+                  setupCue={tabletUp ? setupCue : null}
                   outlineOn={outlineOn}
                 />
               </div>
+              {!tabletUp && state.status === "checking" && state.check !== null ? (
+                <SetupPromptBox check={state.check} now={state.now} promptOnCamera={false} />
+              ) : null}
+              {!tabletUp && cue !== null ? (
+                <p className="rounded-md border border-(--ds-edge) bg-(--ds-surface) px-3.5 py-2 text-[0.9375rem] text-(--ds-text)">
+                  {cue}
+                </p>
+              ) : null}
               {result === null ? null : <RunResults result={result} />}
               {wide && result === null ? (
                 <div className={cn("h-32 flex-none", idle && "flex flex-col justify-center")}>
