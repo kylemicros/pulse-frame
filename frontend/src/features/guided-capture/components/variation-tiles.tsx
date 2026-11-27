@@ -16,24 +16,24 @@ export function VariationTiles({ tile, values, emptyText, windows }: VariationTi
   return KINDS.map((kind) => {
     const value = values[kind]
     return (
-      <div key={kind} className={cn(boxed && "rounded-lg border border-(--ds-border) bg-(--ds-surface-2) px-4 py-3")}>
-        <dt className={boxed ? "font-semibold" : "text-sm font-semibold"}>{VARIATION_LABEL[kind]}</dt>
+      <div
+        key={kind}
+        className={cn(boxed && "flex flex-col gap-1 rounded-lg border border-(--ds-border) bg-(--ds-surface-2) px-4 py-3")}
+      >
+        <dt className="text-sm font-semibold">{VARIATION_LABEL[kind]}</dt>
         {value === null ? (
-          <dd className={boxed ? "text-lg font-bold" : "font-bold"}>{emptyText}</dd>
+          <dd className="font-bold">{emptyText}</dd>
         ) : (
           <dd>
             <span
               className={cn(
                 "font-mono font-bold tabular-nums",
-                boxed ? "text-[2.25rem] leading-[1.1]" : "text-[1.75rem] leading-tight",
+                boxed ? "text-[2rem] leading-[1.1] md:text-[2.75rem]" : "text-[1.75rem] leading-tight",
               )}
             >
               {Math.round(value)}
             </span>
-            <abbr
-              title="milliseconds"
-              className={cn("ml-1.5 font-mono font-bold text-(--ds-muted) no-underline", !boxed && "text-sm")}
-            >
+            <abbr title="milliseconds" className="ml-1.5 font-mono text-sm font-bold text-(--ds-muted) no-underline">
               ms
             </abbr>
           </dd>

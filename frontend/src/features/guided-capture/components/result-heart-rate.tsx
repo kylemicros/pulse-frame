@@ -2,30 +2,27 @@ import { averageLine } from "@/features/guided-capture/lib/run-copy"
 import type { RunResult } from "@/features/guided-capture/types"
 
 type ResultHeartRateProps = {
-  result: RunResult | null
+  result: RunResult
 }
 
 export function ResultHeartRate({ result }: ResultHeartRateProps) {
-  if (result === null) {
-    return <dd className="text-lg font-bold">No reading yet</dd>
-  }
   if (result.kind === "none") {
     return (
       <>
-        <dd className="text-lg font-bold">No reading this time</dd>
+        <dd className="mt-1 text-[2rem] leading-[1.2] font-bold">No reading this time</dd>
         <dd className="text-sm text-(--ds-muted)">Last counted minute.</dd>
       </>
     )
   }
   return (
     <>
-      <dd>
-        <span className="font-mono text-[3.5rem] leading-[1.1] font-bold tabular-nums">{result.bpm}</span>
-        <abbr title="beats per minute" className="ml-1.5 font-mono font-bold text-(--ds-muted) no-underline">
+      <dd className="flex flex-wrap items-baseline gap-x-3.5">
+        <span className="font-mono text-[4.5rem] leading-none font-bold tabular-nums md:text-[7rem]">{result.bpm}</span>
+        <abbr title="beats per minute" className="font-mono text-[1.75rem] font-bold text-(--ds-muted) no-underline">
           BPM
         </abbr>
       </dd>
-      <dd className="text-sm text-(--ds-muted)">{averageLine(result.likely)}</dd>
+      <dd className="mt-1 text-lg">{averageLine(result.likely)}</dd>
     </>
   )
 }

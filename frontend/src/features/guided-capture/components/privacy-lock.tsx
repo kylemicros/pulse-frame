@@ -2,14 +2,28 @@ import { LockSimpleIcon } from "@phosphor-icons/react"
 import { useEffect, useRef, useState, type FocusEvent, type PointerEvent } from "react"
 import { LOCK_WORDS } from "@/features/guided-capture/lib/run-copy"
 
-export function PrivacyLock() {
+type PrivacyLockProps = {
+  shown: boolean
+}
+
+export function PrivacyLock({ shown: lockShown }: PrivacyLockProps) {
   const [hovered, setHovered] = useState(false)
   const [keyFocused, setKeyFocused] = useState(false)
   const [tapped, setTapped] = useState(false)
   const [dismissed, setDismissed] = useState(false)
+  const [wasShown, setWasShown] = useState(lockShown)
   const rootRef = useRef<HTMLSpanElement>(null)
   const touchedRef = useRef(false)
-  const shown = !dismissed && (hovered || keyFocused || tapped)
+  if (wasShown !== lockShown) {
+    setWasShown(lockShown)
+    if (!lockShown) {
+      setHovered(false)
+      setKeyFocused(false)
+      setTapped(false)
+      setDismissed(false)
+    }
+  }
+  const shown = lockShown && !dismissed && (hovered || keyFocused || tapped)
 
   useEffect(() => {
     if (!shown) {

@@ -22,7 +22,8 @@ export function RunProgress({ stage, elapsed }: RunProgressProps) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-baseline gap-2.5">
         <span role="timer" aria-label={timerLabel} className="font-mono text-5xl leading-none font-bold tabular-nums">
-          {`${left} s`}
+          {`${left} `}
+          <span className="text-[1.75rem]">s</span>
         </span>
         <span className="text-(--ds-muted)">{stage === "warm-up" ? "until counting starts" : "until done"}</span>
       </div>

@@ -1,20 +1,20 @@
 import { cn } from "cn"
-import { useCallback, useRef, useState, type ReactNode } from "react"
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { PulseTrace } from "@/features/guided-capture/components/pulse-trace"
 import { RunCamera } from "@/features/guided-capture/components/run-camera"
 import { RunPanel } from "@/features/guided-capture/components/run-panel"
+import { RunResults } from "@/features/guided-capture/components/run-results"
 import { RunSteps } from "@/features/guided-capture/components/run-steps"
 import { SettingsMenu, type SettingSwitchItem } from "@/features/settings"
 import { useGuidedRun } from "@/features/guided-capture/hooks/use-guided-run"
 import { useHeldValue } from "@/features/guided-capture/hooks/use-held-value"
 import { useTabletUp, useWideLayout } from "@/features/guided-capture/hooks/use-wide-layout"
 import { CALIBRATE_FLAG } from "@/features/guided-capture/lib/calibration-readout"
-import { VIDEO_EMPTY } from "@/features/guided-capture/lib/empty-copy"
+import { CAMERA_WAKING, IDLE_CAMERA_LABEL, IDLE_HEADLINE } from "@/features/guided-capture/lib/empty-copy"
 import { sceneHint, VIDEO_HINT } from "@/features/guided-capture/lib/reading-copy"
 import {
   CAMERA_CUE,
-  CAMERA_OFF_DONE,
   CAMERA_OFF_STOPPED,
   CALIBRATION_LINE_START,
   cameraOffAfter,
@@ -34,11 +34,8 @@ const STRIP: Record<Stage, string> = {
 
 function cameraOffText(state: GuidedState, stage: Stage): string | null {
   const { monitor } = state
-  if (monitor.phase === "running") {
+  if (monitor.phase === "running" || stage === "result") {
     return null
-  }
-  if (stage === "result") {
-    return CAMERA_OFF_DONE
   }
   if (state.endError !== null) {
     return cameraOffAfter(state.endError)
@@ -46,7 +43,7 @@ function cameraOffText(state: GuidedState, stage: Stage): string | null {
   if (state.status === "stopped") {
     return CAMERA_OFF_STOPPED
   }
-  return monitor.phase === "starting" ? VIDEO_EMPTY.starting : VIDEO_EMPTY.idle
+  return monitor.phase === "starting" ? CAMERA_WAKING : null
 }
 
 function buttonLabel(state: GuidedState): "Start" | "Stop" | "Start again" {
@@ -68,6 +65,7 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
   const wide = useWideLayout()
   const tabletUp = useTabletUp()
   const popoverHomeRef = useRef<HTMLDivElement>(null)
+  const cameraHomeRef = useRef<HTMLDivElement>(null)
   const mainButtonRef = useRef<HTMLButtonElement>(null)
   const focusMainButton = useCallback(() => mainButtonRef.current?.focus(), [])
   const hint = VIDEO_HINT[useHeldValue(sceneHint(state.monitor.scene))]
@@ -76,6 +74,41 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
   const stoppedLine = state.status === "stopped" && state.endError === null
   const camOn = state.status === "checking" || state.status === "running"
   const setupCue = state.check === null ? null : setupPromptText(state.check)
+  const idle = state.status === "idle" && state.endError === null
+  const result = stage === "result" ? state.result : null
+  const errorShown = state.endError !== null && result === null
+  const idleHeadline = (
+    <p className="text-[1.75rem] leading-[1.15] font-extrabold tracking-[-0.015em] md:text-[2.125rem]">
+      {IDLE_HEADLINE}
+    </p>
+  )
+  const alertFirst = !wide && errorShown
+  const resultShown = result !== null
+  useLayoutEffect(() => {
+    if (resultShown && cameraHomeRef.current?.contains(document.activeElement)) {
+      focusMainButton()
+    }
+  }, [resultShown, focusMainButton])
+  const panel = (
+    <div
+      data-testid="run-panel"
+      className="relative flex min-w-0 flex-col gap-4 lg:min-h-0 lg:gap-0 lg:overflow-hidden lg:rounded-[10px] lg:border lg:border-(--ds-border) lg:bg-(--ds-surface)"
+    >
+      <output data-testid="milestone-status" className={stoppedLine ? "block lg:px-5 lg:pt-5" : "sr-only"}>
+        {milestoneText(state)}
+      </output>
+      <RunPanel
+        wide={wide}
+        state={state}
+        stage={stage}
+        elapsed={elapsedMs(state)}
+        hint={state.status === "running" ? hint : null}
+        onStartAnyway={startAnyway}
+        onFocusLeave={focusMainButton}
+        calibrate={calibrate && calibrationOn}
+      />
+    </div>
+  )
   const traceShown =
     (state.status === "checking" && state.check !== null) || stage === "warm-up" || stage === "counted"
   const switches: SettingSwitchItem[] = [
@@ -134,42 +167,39 @@ export function GuidedRunPage({ brand }: GuidedRunPageProps) {
             </div>
           )}
           <div className="grid gap-4 md:gap-6 lg:min-h-0 [--panel-width:384px] min-[1920px]:[--panel-width:440px] lg:grid-cols-[minmax(0,1fr)_var(--panel-width)]">
-            <div className="flex min-w-0 flex-col gap-3 lg:grid lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_auto]">
-              <div className="min-w-0 lg:min-h-0 lg:@container-size">
+            {alertFirst ? panel : null}
+            <div
+              className={cn(
+                "flex min-w-0 flex-col gap-3 lg:grid lg:min-h-0",
+                result === null ? "lg:grid-rows-[minmax(0,1fr)_auto]" : "lg:grid-rows-[minmax(0,1fr)]",
+              )}
+            >
+              <div
+                ref={cameraHomeRef}
+                className={cn("min-w-0 lg:min-h-0 lg:@container-size", result !== null && "hidden")}
+              >
                 <RunCamera
                   videoRef={videoRef}
                   live={state.monitor.phase === "running"}
+                  shown={result === null}
                   scene={camOn ? state.monitor.scene : null}
                   offText={cameraOffText(state, stage)}
-                  cue={refShown || state.check !== null ? null : CAMERA_CUE[stage]}
+                  hiddenLabel={idle ? IDLE_CAMERA_LABEL : null}
+                  cue={refShown || state.check !== null ? null : (CAMERA_CUE[stage] ?? null)}
                   setupCue={setupCue}
                   outlineOn={outlineOn}
                 />
               </div>
-              {wide ? (
-                <div className="h-32 flex-none">
+              {result === null ? null : <RunResults result={result} />}
+              {wide && result === null ? (
+                <div className={cn("h-32 flex-none", idle && "flex flex-col justify-center")}>
                   {traceShown ? <PulseTrace samples={state.monitor.samples} /> : null}
+                  {idle ? idleHeadline : null}
                 </div>
               ) : null}
+              {!wide && idle ? idleHeadline : null}
             </div>
-            <div
-              data-testid="run-panel"
-              className="relative flex min-w-0 flex-col gap-4 lg:min-h-0 lg:gap-0 lg:overflow-hidden lg:rounded-[10px] lg:border lg:border-(--ds-border) lg:bg-(--ds-surface)"
-            >
-              <output data-testid="milestone-status" className={stoppedLine ? "block lg:px-5 lg:pt-5" : "sr-only"}>
-                {milestoneText(state)}
-              </output>
-              <RunPanel
-                wide={wide}
-                state={state}
-                stage={stage}
-                elapsed={elapsedMs(state)}
-                hint={state.status === "running" ? hint : null}
-                onStartAnyway={startAnyway}
-                onFocusLeave={focusMainButton}
-                calibrate={calibrate && calibrationOn}
-              />
-            </div>
+            {alertFirst ? null : panel}
           </div>
         </div>
       </main>

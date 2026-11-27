@@ -80,12 +80,14 @@ export function guidedPage(page: Page) {
   const steps = stepList.getByRole('listitem');
   const liveReadings = main.getByRole('region', { name: 'Live readings' });
   const video = main.getByLabel('Camera preview');
+  const cameraBox = video.locator('xpath=..');
   const setupCheck = main.getByRole('list', { name: 'Setup check' });
   return {
     setupCheck,
     setupRow: (name: SetupRow): Locator => setupCheck.getByRole('listitem').filter({ hasText: name }),
     setupPrompt: main.getByTestId('setup-prompt'),
-    cameraCue: (text: string): Locator => video.locator('xpath=..').getByText(text, { exact: true }),
+    cameraBox,
+    cameraCue: (text: string): Locator => cameraBox.getByText(text, { exact: true }),
     spoken: (text: string): Locator => main.getByRole('status').filter({ hasText: wholeText(text) }),
     startAnyway: main.getByRole('button', { name: 'Start anyway', exact: true }),
     startAnywayWait: main.getByRole('progressbar', { name: 'Until start anyway shows up' }),
@@ -371,7 +373,6 @@ export function liveRegionsIn(scope: Locator): Promise<string[]> {
 }
 
 export const RUN_STOPPED_TEXT = 'Run stopped. Press Start again for a fresh run.';
-export const FACE_A_WINDOW_CUE = 'Face a window so the light is even.';
 
 export async function pushAndConfirm(page: Page, backend: MockBackend, reading: Reading): Promise<void> {
   const since = await pageNow(page);

@@ -40,7 +40,15 @@ import {
   tabTo,
 } from './support/settings';
 import { startBuiltPreview, type BuiltPreview } from './support/built-preview';
-import { longestPathCommands, refuseCamera, setTabHidden, videoIsPlaying } from './support/page-helpers';
+import {
+  endVideoTracks,
+  longestPathCommands,
+  refuseCamera,
+  setTabHidden,
+  spyOnCamera,
+  videoIsPlaying,
+} from './support/page-helpers';
+import { expectNoResultTiles, idleHeadline, resultHero } from './support/result-states';
 
 const START_ANYWAY_BUDGET_MS = 17000;
 const CALIBRATE_SEARCH = '?calibrate';
@@ -220,6 +228,8 @@ test.describe('guided page screenshots', () => {
     await expect(guided.start).toBeVisible();
     await expect(guided.lock).toBeVisible();
     await expect(guided.outlines).toHaveCount(0);
+    await expect(idleHeadline(page)).toBeVisible();
+    await expectNoResultTiles(page);
     expect(session.backend.connections).toEqual([]);
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
@@ -328,8 +338,11 @@ test.describe('guided page screenshots', () => {
     await runToEnd(page, session, hrv({ rmssd_ms: 41.2, sdnn_ms: 46.7, minute_bpm: 67.8, minute_count: 72 }));
 
     await expect(guided.headline('Done. Nice sitting.')).toBeVisible();
+    await expect(resultHero(page).hero).toBeVisible();
+    await expect(resultHero(page).number(68)).toBeVisible();
     await expect(guided.main.getByRole('definition').filter({ hasText: 'BPM' })).toHaveText(/^\s*68\s*BPM\s*$/);
-    await expect(guided.variationLine).toBeVisible();
+    await expect(resultHero(page).variationLine).toBeVisible();
+    await expect(guided.video).toBeHidden();
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
   }
@@ -348,7 +361,9 @@ test.describe('guided page screenshots', () => {
     await expect
       .poll(() => termLines(guided.main, 'Heart rate'))
       .toEqual([expect.stringMatching(/^68 ?BPM$/), 'Average over the last counted minute. Likely 66 to 70.']);
-    await expect(guided.variationLine).toBeVisible();
+    await expect(resultHero(page).hero).toBeVisible();
+    await expect(resultHero(page).variationLine).toBeVisible();
+    await expect(guided.video).toBeHidden();
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
   }
@@ -371,7 +386,9 @@ test.describe('guided page screenshots', () => {
 
     await expect(guided.headline('Done, but no reading this time.')).toBeVisible();
     await expect(guided.main.getByText(`Ref: ${code}`, { exact: true })).toBeVisible();
-    await expect(guided.main.getByText('Not enough beats this time', { exact: true })).toHaveCount(2);
+    await expect(resultHero(page).noReading).toBeVisible();
+    await expect(resultHero(page).hero.getByText('Not enough beats this time', { exact: true })).toHaveCount(2);
+    await expect(guided.video).toBeHidden();
     await expectOnlyMockedSockets(session);
     await capture(page, testInfo, name);
   }
@@ -412,7 +429,27 @@ test.describe('guided page screenshots', () => {
     await guided.start.click();
 
     await expect(guided.alert).toContainText('Ref: CAMERA_DENIED');
+    await expectNoResultTiles(page);
     await expectOnlyMockedSockets(session);
+    await capture(page, testInfo, name);
+  }
+
+  async function guidedCameraLost(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    await spyOnCamera(page);
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+    await startGuidedRun(page, session);
+    await advanceRun(page, session.backend, 10000, 2500);
+    await expect(guided.warmUpTimer).toBeVisible();
+    await expectOnlyMockedSockets(session);
+
+    await endVideoTracks(page);
+    await page.clock.runFor(1000);
+
+    await expect(guided.alert).toContainText('Ref: CAMERA_LOST');
+    await expect(guided.main.getByText("Camera's off. It dropped out.", { exact: true })).toBeVisible();
+    await expectNoResultTiles(page);
+    await expect(guided.startAgain).toBeVisible();
     await capture(page, testInfo, name);
   }
 
@@ -744,6 +781,7 @@ test.describe('guided page screenshots', () => {
     { state: 'no-reading-face', title: 'the guided run with no reading as the face left view', shoot: guidedNoReadingFace },
     { state: 'no-reading-weak', title: 'the guided run with no reading from a weak signal', shoot: guidedNoReadingWeak },
     { state: 'camera-denied', title: 'the guided run camera denied guidance', shoot: guidedCameraDenied },
+    { state: 'camera-lost', title: 'the guided run stopped as the camera dropped out in the warm-up', shoot: guidedCameraLost },
     { state: 'last-good', title: 'the guided run holding the last good heart rate', shoot: guidedLastGood },
     { state: 'busy', title: 'the guided run stopped because the app is busy elsewhere', shoot: guidedBusy },
     { state: 'unreachable', title: 'the guided run stopped because the pulse reader is unreachable', shoot: guidedUnreachable },
