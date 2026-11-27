@@ -87,6 +87,7 @@ jobs:
           name: blob-report-${{ matrix.shardIndex }}
           path: frontend/blob-report/
           retention-days: 1
+          overwrite: true
 
   frontend:
     if: ${{ always() }}
@@ -133,6 +134,7 @@ jobs:
           retention-days: 14
 
       - name: Require every job to pass
+        working-directory: .
         if: ${{ always() }}
         env:
           CHECKS_RESULT: ${{ needs.checks.result }}
