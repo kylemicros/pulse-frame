@@ -46,6 +46,7 @@ import {
 } from '../../support/mock-backend';
 import { boxOf, pageNow, setTabHidden } from '../../support/page-helpers';
 import { CHECK_SETTLE_MS, EARLIER, FAR_FACE, FAR_SPAN_PX } from '../../support/app-shell';
+import { settingsPanel } from '../../support/settings';
 
 const CALIBRATE = '/?calibrate';
 const SHORT_LOOK_MS = 2000;
@@ -546,11 +547,11 @@ test.describe('calibration readout during the setup check', () => {
 
   test('announces nothing from the box and leaves focus where it was while the numbers change', async ({ page }) => {
     const { backend } = await openCheck(page, { scene: FAR_FACE });
-    const guided = guidedPage(page);
     const box = calibrationBox(page);
     await paceReplies(page, backend, SHORT_LOOK_MS);
     await expect(box.region).toBeVisible();
-    await guided.skinOutline.focus();
+    await expect(settingsPanel(page).gear).toBeVisible();
+    await settingsPanel(page).gear.focus();
 
     backend.setScene(faceScene({ moving: true }));
     await paceReplies(page, backend, SHORT_LOOK_MS);
@@ -566,7 +567,7 @@ test.describe('calibration readout during the setup check', () => {
     expect(insideLive, 'the box sits inside a live region').toBe(false);
     const said = (await announcements(page)).filter((each) => BOX_WORDS.test(each.text));
     expect(said, 'announcements carrying the box text').toEqual([]);
-    await expect(guided.skinOutline).toBeFocused();
+    await expect(settingsPanel(page).gear).toBeFocused();
   });
 
   test('sends nothing new over the socket or the network and stores nothing with the box on', async ({ page }) => {

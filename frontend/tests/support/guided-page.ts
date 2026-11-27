@@ -8,15 +8,15 @@ type Reading = { bpm: number | null; quality_db: number | null; state: 'acquirin
 
 type SoundWindow = Window & { soundSpy: { count: number } };
 
-const STEP_NAMES = ['Get comfy', 'Warm-up', 'Counted', 'Result'] as const;
-type StepName = (typeof STEP_NAMES)[number];
+export const STEP_NAMES = ['Get comfy', 'Warm-up', 'Counted', 'Result'] as const;
+export type StepName = (typeof STEP_NAMES)[number];
 
 const WARM_UP_MS = 60000;
 const COUNTED_MS = 90000;
 export const RUN_MS = WARM_UP_MS + COUNTED_MS;
 
 export const DISCLAIMER =
-  'For wellness and curiosity only. pulse-frame is not a medical device, and its numbers are estimates.';
+  'For wellness and curiosity only. pulse frame is not a medical device, and its numbers are estimates.';
 export const VARIATION_LINE =
   'Both show how much the gap between your beats shifts, in ms (thousandths of a second). Compare them only with your own runs.';
 export const OLD_VARIATION_LATER = 'Both variation numbers fill in with a later update.';
@@ -76,7 +76,7 @@ export function wholeText(text: string): RegExp {
 
 export function guidedPage(page: Page) {
   const main = page.getByRole('main');
-  const stepList = main.getByRole('list', { name: 'Capture steps' });
+  const stepList = page.getByRole('list', { name: 'Capture steps' });
   const steps = stepList.getByRole('listitem');
   const liveReadings = main.getByRole('region', { name: 'Live readings' });
   const video = main.getByLabel('Camera preview');
@@ -94,13 +94,14 @@ export function guidedPage(page: Page) {
     stepList,
     steps,
     step: (name: StepName): Locator => steps.filter({ hasText: name }),
-    phaseLine: (text: string): Locator => main.getByText(text, { exact: true }),
+    stepName: (name: StepName): Locator => steps.filter({ hasText: name }).getByText(name, { exact: true }),
+    oldStepLine: page.getByText(/^Step \d of 4, /),
     headline: (text: string): Locator => main.getByRole('heading', { name: text, exact: true }),
-    start: main.getByRole('button', { name: 'Start', exact: true }),
-    stop: main.getByRole('button', { name: 'Stop', exact: true }),
-    startAgain: main.getByRole('button', { name: 'Start again', exact: true }),
-    chime: main.getByRole('button', { name: /^Chime at start and end/ }),
-    skinOutline: main.getByRole('button', { name: /^Skin outline: (on|off)$/ }),
+    start: page.getByRole('button', { name: 'Start', exact: true }),
+    stop: page.getByRole('button', { name: 'Stop', exact: true }),
+    startAgain: page.getByRole('button', { name: 'Start again', exact: true }),
+    lock: main.getByRole('button', { name: 'Stays on this computer', exact: true }),
+    lockWords: page.getByText('Stays on this computer', { exact: true }),
     video,
     outlines: main.getByTestId(/^patch-outline-/),
     outline: (name: PatchName): Locator => main.getByTestId(`patch-outline-${name}`),
@@ -431,7 +432,27 @@ export async function expectCurrentStep(page: Page, current: StepName): Promise<
       await expect(step).not.toContainText('Now');
     }
     if (position < index) {
-      await expect(step).toContainText('Done');
+      await expect(step).toContainText('done', { ignoreCase: true });
+    }
+    await expect(step).not.toContainText('Stopped');
+  }
+}
+
+export async function expectStoppedStep(page: Page, stopped: StepName): Promise<void> {
+  const guided = guidedPage(page);
+  await expect(guided.steps).toHaveCount(4);
+  const index = STEP_NAMES.indexOf(stopped);
+  for (const [position, name] of STEP_NAMES.entries()) {
+    const step = guided.step(name);
+    await expect(step).not.toContainText('Now');
+    await expect(step).not.toHaveAttribute('aria-current', 'step');
+    if (position === index) {
+      await expect(step).toContainText('Stopped');
+    } else {
+      await expect(step).not.toContainText('Stopped');
+    }
+    if (position < index) {
+      await expect(step).toContainText('done', { ignoreCase: true });
     }
   }
 }

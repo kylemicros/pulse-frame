@@ -18,12 +18,13 @@ import {
 } from './support/brand';
 import { FRONTEND_ROOT, startBuiltPreview, type BuiltPreview } from './support/built-preview';
 import { boxOf } from './support/page-helpers';
+import { underAriaHidden } from './support/settings';
 
 type HeadLink = { rel: string; href: string | null; sizes: string | null; type: string | null };
 
 type ManifestIcon = { src: string; sizes?: string; type?: string; purpose?: string };
 
-type Manifest = { name?: string; theme_color?: string; background_color?: string; icons?: ManifestIcon[] };
+type Manifest = { name?: string; short_name?: string; theme_color?: string; background_color?: string; icons?: ManifestIcon[] };
 
 const ICON_RELS = ['icon', 'shortcut', 'apple-touch-icon', 'apple-touch-icon-precomposed', 'mask-icon', 'manifest'];
 
@@ -168,7 +169,8 @@ test.describe('icon set in the built page', () => {
   }) => {
     const { manifest } = await readManifest(request, siteUrl());
 
-    expect(manifest.name).toBe('pulse-frame');
+    expect(manifest.name).toBe('pulse frame');
+    expect(manifest.short_name).toBe('pulse frame');
     expect(manifest.theme_color).toMatch(HEX_COLOUR);
     expect(manifest.background_color).toMatch(HEX_COLOUR);
     const icons = (manifest.icons ?? []).map((icon) => ({
@@ -251,15 +253,16 @@ test.describe('icon set in the built page', () => {
 });
 
 test.describe('header logo', () => {
-  test('shows the Hop mark hidden from screen readers beside the pulse-frame wordmark', async ({ page }) => {
+  test('shows the Hop mark hidden from screen readers beside the pulse frame name, one heading', async ({ page }) => {
     await page.goto('/');
     const logo = headerLogo(page);
 
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
     await expect(logo.wordmark).toBeVisible();
-    await expect(logo.wordmark).toHaveText('pulse-frame');
+    await expect(logo.wordmark).toHaveAccessibleName('pulse frame');
     await expect(logo.mark).toHaveCount(1);
     await expect(logo.mark).toBeVisible();
+    await expect(logo.mark).toHaveAttribute('aria-hidden', 'true');
     await expect(logo.mark).toHaveAttribute('viewBox', /\S/);
     await expect(logo.wordmark.locator('svg'), 'the mark sits inside the heading instead of beside it').toHaveCount(0);
 
@@ -273,6 +276,33 @@ test.describe('header logo', () => {
       Math.abs(markBox.y + markBox.height / 2 - (wordBox.y + wordBox.height / 2)),
       'the mark is not level with the wordmark',
     ).toBeLessThanOrEqual(markBox.height / 2);
+  });
+
+  test('stacks lowercase bold pulse over frame, the two lines together as tall as the mark', async ({ page }) => {
+    await page.goto('/');
+    const logo = headerLogo(page);
+    const pulse = logo.wordmark.getByText('pulse', { exact: true });
+    const frame = logo.wordmark.getByText('frame', { exact: true });
+
+    await expect(pulse).toBeVisible();
+    await expect(frame).toBeVisible();
+    await expect(logo.banner.getByText(/pulse-frame|pulse\.|frame\./)).toHaveCount(0);
+    await expect(pulse).toHaveCSS('font-weight', '700');
+    await expect(frame).toHaveCSS('font-weight', '700');
+    expect(await underAriaHidden(pulse), 'pulse read twice').toBe(true);
+    expect(await underAriaHidden(frame), 'frame read twice').toBe(true);
+
+    const markBox = await boxOf(logo.mark);
+    const wordBox = await boxOf(logo.wordmark);
+    const pulseBox = await boxOf(pulse);
+    const frameBox = await boxOf(frame);
+    expect(frameBox.y, 'frame sits on the line under pulse').toBeGreaterThanOrEqual(pulseBox.y + pulseBox.height - 3);
+    expect(Math.abs(frameBox.x - pulseBox.x), 'the two lines start at one left edge').toBeLessThanOrEqual(1);
+    expect(Math.abs(wordBox.height - markBox.height), 'the two lines together against the mark height').toBeLessThanOrEqual(
+      2,
+    );
+    expect(pulseBox.y, 'pulse starts inside the name').toBeGreaterThanOrEqual(wordBox.y - 2);
+    expect(frameBox.y + frameBox.height, 'frame ends inside the name').toBeLessThanOrEqual(wordBox.y + wordBox.height + 2);
   });
 
   for (const colorScheme of ['light', 'dark'] as const) {

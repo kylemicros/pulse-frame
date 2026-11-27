@@ -29,7 +29,7 @@ const DROPPED = { code: 1006 };
 const BUSY_MESSAGE = 'The app is busy in another tab or window, so the run stopped.';
 const BUSY_ACTION = 'Close the other one, then press Start again.';
 const UNREACHABLE_MESSAGE = "Can't reach the pulse reader, so the run stopped.";
-const UNREACHABLE_ACTION = 'Check pulse-frame is running on this computer, then press Start again.';
+const UNREACHABLE_ACTION = 'Check pulse frame is running on this computer, then press Start again.';
 const CAMERA_OFF_STOPPED = "Camera's off. The run stopped.";
 
 async function expectCameraAndSocketClosed(page: Page, backend: MockBackend): Promise<void> {
@@ -93,7 +93,7 @@ test.describe('guided run interruptions', () => {
       code: 'CAMERA_UNSUPPORTED',
       refuse: (page: Page) => removeCameraApi(page, 'mediaDevices'),
       message: "This browser won't share the camera here. Browsers only do that on a secure or local address.",
-      action: 'Open pulse-frame at its local address in an up to date browser, then press Start.',
+      action: 'Open pulse frame at its local address in an up to date browser, then press Start.',
       cameraLine: "Camera's off. This browser won't share it here.",
     },
   ] as const;

@@ -1,24 +1,12 @@
-import { useSyncExternalStore } from "react"
+import { useMediaMatch } from "@/features/guided-capture/hooks/use-media-match"
 
 const WIDE_QUERY = "(min-width: 64rem)"
-
-let wideList: MediaQueryList | null = null
-
-function wideQuery(): MediaQueryList {
-  wideList ??= globalThis.matchMedia(WIDE_QUERY)
-  return wideList
-}
-
-function subscribe(onChange: () => void): () => void {
-  const list = wideQuery()
-  list.addEventListener("change", onChange)
-  return () => list.removeEventListener("change", onChange)
-}
-
-function isWide(): boolean {
-  return wideQuery().matches
-}
+const TABLET_UP_QUERY = "(min-width: 48rem)"
 
 export function useWideLayout(): boolean {
-  return useSyncExternalStore(subscribe, isWide, () => false)
+  return useMediaMatch(WIDE_QUERY)
+}
+
+export function useTabletUp(): boolean {
+  return useMediaMatch(TABLET_UP_QUERY)
 }

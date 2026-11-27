@@ -274,6 +274,40 @@
     },
     {
       "files": [
+        "src/features/settings/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?(/|$)",
+                "message": "Use the @/ alias inside src, never a relative path."
+              },
+              {
+                "group": [
+                  "@/features/**",
+                  "!@/features/settings/**"
+                ],
+                "message": "settings is a leaf feature and imports no other feature. Move the shared code into @/lib or @/components."
+              },
+              {
+                "group": [
+                  "@/app",
+                  "@/app.*",
+                  "@/main",
+                  "@/main.*"
+                ],
+                "message": "The app and the entry are the top layer, so nothing below them imports @/app or @/main. Move the shared code into @/lib or @/components and import it from there."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
         "src/features/guided-capture/**"
       ],
       "rules": {

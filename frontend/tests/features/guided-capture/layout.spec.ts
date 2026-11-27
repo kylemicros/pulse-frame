@@ -3,7 +3,9 @@ import {
   calibrationBox,
   fontFamily,
   guidedPage,
+  LONG_STEP_MS,
   openGuidedRun,
+  paceUntil,
   pushAndConfirm,
   SETUP_ROWS,
   SLOW_STEP_MS,
@@ -21,11 +23,13 @@ import {
   setSafeAreaBottom,
   type Rect,
 } from '../../support/app-shell';
+import { PAGE_BACKGROUND } from '../../support/settings';
 
 const SAFE_AREA_PX = 34;
 const SHORT_PHONE_HEIGHT = 480;
+const START_ANYWAY_BUDGET_MS = 17000;
+const STRIP_CLEARANCE_PX = 16;
 
-const PAGE_BACKGROUND = { light: 'rgb(247, 247, 245)', dark: 'rgb(20, 20, 20)' } as const;
 
 function backgroundBehind(page: Page, x: number, y: number): Promise<string> {
   return page.evaluate(
@@ -52,7 +56,7 @@ test.describe('the guided run as the only page', () => {
     await expect(page.getByRole('main')).toHaveCount(1);
     await expect(page.getByRole('main')).toBeVisible();
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('pulse-frame');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveAccessibleName('pulse frame');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.getByRole('tablist')).toHaveCount(0);
     await expect(page.getByRole('tab')).toHaveCount(0);
@@ -60,7 +64,7 @@ test.describe('the guided run as the only page', () => {
     await expect(page.getByText('Live monitor')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Start', exact: true })).toHaveCount(1);
     await expect(guided.start).toBeVisible();
-    await expect(page).toHaveTitle('pulse-frame');
+    await expect(page).toHaveTitle('pulse frame');
   });
 
   for (const colorScheme of ['light', 'dark'] as const) {
@@ -72,8 +76,35 @@ test.describe('the guided run as the only page', () => {
 
       await openGuidedRun(page);
 
+      const header = await boxOf(page.getByRole('banner'));
+      const underHeader = Math.ceil(header.y + header.height) + STRIP_CLEARANCE_PX;
+
       expect(await backgroundBehind(page, 2, (viewport?.height ?? 0) - 2)).toBe(PAGE_BACKGROUND[colorScheme]);
-      expect(await backgroundBehind(page, (viewport?.width ?? 0) - 2, 2)).toBe(PAGE_BACKGROUND[colorScheme]);
+      expect(await backgroundBehind(page, (viewport?.width ?? 0) - 2, underHeader)).toBe(PAGE_BACKGROUND[colorScheme]);
+    });
+
+    test(`sets the header on the surface colour in the ${colorScheme} theme`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await MockBackend.attach(page);
+      await openGuidedRun(page);
+      const banner = page.getByRole('banner');
+      const header = await boxOf(banner);
+
+      const surface = await page.evaluate(() => {
+        const probe = document.createElement('div');
+        probe.style.background = 'var(--ds-surface)';
+        document.body.append(probe);
+        const colour = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return colour;
+      });
+
+      expect(surface).not.toBe(PAGE_BACKGROUND[colorScheme]);
+      expect(await backgroundBehind(page, header.x + 2, header.y + 2), 'the header top left').toBe(surface);
+      expect(
+        await backgroundBehind(page, header.x + header.width - 2, header.y + header.height - 2),
+        'the header bottom right',
+      ).toBe(surface);
     });
   }
 });
@@ -150,15 +181,14 @@ test.describe('guided run layout', () => {
     });
 
     test('scrolls a control that sits under the bottom bar clear of it when it takes focus', async ({ page }) => {
-      await MockBackend.attach(page);
+      const backend = await reachFarCheck(page, LONG_STEP_MS);
       const guided = guidedPage(page);
-      await openGuidedRun(page);
+      await paceUntil(page, backend, guided.startAnyway, START_ANYWAY_BUDGET_MS, LONG_STEP_MS);
       await setSafeAreaBottom(page, SAFE_AREA_PX);
 
-      for (const [name, control, height] of [
-        ['the chime switch', guided.chime, 844],
-        ['the skin outline switch', guided.skinOutline, SHORT_PHONE_HEIGHT],
-      ] as const) {
+      const control = guided.startAnyway;
+      for (const height of [844, SHORT_PHONE_HEIGHT]) {
+        const name = `the Start anyway button at 390x${height}`;
         await page.setViewportSize({ width: 390, height });
         await page.evaluate(() => {
           (document.activeElement as HTMLElement | null)?.blur();
@@ -184,17 +214,25 @@ test.describe('guided run layout', () => {
   test.describe('on a desktop', () => {
     test.use({ viewport: { width: 1280, height: 800 } });
 
-    test('keeps the main button top right of the card, above the steps', async ({ page }) => {
+    test('keeps the main button at the right end of the header row, after the steps', async ({ page }) => {
       await MockBackend.attach(page);
       const guided = guidedPage(page);
       await openGuidedRun(page);
+      const banner = page.getByRole('banner');
 
+      await expect(banner.getByRole('button', { name: 'Start', exact: true })).toBeVisible();
       const button = await boxOf(guided.start);
-      const steps = await boxOf(guided.main.getByRole('list', { name: 'Capture steps' }));
-      const card = await boxOf(guided.main);
+      const steps = await boxOf(guided.stepList);
+      const header = await boxOf(banner);
 
-      expect(button.y + button.height).toBeLessThanOrEqual(steps.y);
-      expect(button.x + button.width).toBeGreaterThanOrEqual(card.x + card.width * 0.75);
+      expect(button.x, 'the main button sits after the steps').toBeGreaterThanOrEqual(steps.x + steps.width - 1);
+      expect(button.x + button.width, 'the main button reaches the right end of the header').toBeGreaterThanOrEqual(
+        header.x + header.width - 48,
+      );
+      expect(
+        Math.abs(button.y + button.height / 2 - (steps.y + steps.height / 2)),
+        'the main button sits on the row of the steps',
+      ).toBeLessThanOrEqual(8);
     });
   });
 });

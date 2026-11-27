@@ -16,6 +16,7 @@ import {
 } from '../../support/guided-page';
 import { hrv, MockBackend } from '../../support/mock-backend';
 import { pageNow, refuseCamera, watchedText, watchText } from '../../support/page-helpers';
+import { expectSetting, setSetting } from '../../support/settings';
 
 const MILESTONES = [
   /^Warm-up started\b/,
@@ -97,7 +98,7 @@ test.describe('guided run cues', () => {
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
     await openGuidedRun(page);
-    await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
+    await expectSetting(page, 'Chime', true);
     await guided.start.click();
     await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
     await passSetupCheck(page, backend);
@@ -144,7 +145,7 @@ test.describe('guided run cues', () => {
     await MockBackend.attach(page);
     const guided = guidedPage(page);
     await openGuidedRun(page);
-    await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
+    await expectSetting(page, 'Chime', true);
 
     await guided.start.click();
 
@@ -175,7 +176,7 @@ test.describe('guided run cues', () => {
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
     await openGuidedRun(page);
-    await expect(guided.chime).toHaveAttribute('aria-pressed', 'true');
+    await expectSetting(page, 'Chime', true);
     await watchText(guided.milestones, 'milestones');
 
     await guided.start.click();
@@ -208,8 +209,7 @@ test.describe('guided run cues', () => {
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
     await openGuidedRun(page);
-    await guided.chime.click();
-    await expect(guided.chime).toHaveAttribute('aria-pressed', 'false');
+    await setSetting(page, 'Chime', false);
     await watchText(guided.milestones, 'milestones');
 
     await guided.start.click();
@@ -227,5 +227,47 @@ test.describe('guided run cues', () => {
     expect(spoken).toContainEqual(expect.stringMatching(/^Counting started\b/));
     expect(spoken).toContainEqual(expect.stringMatching(/^Done\b/));
     expect(await soundsPlayed(page)).toBe(0);
+  });
+
+  test('plays the chime at counting and at done once it is turned on in Settings during the warm-up', async ({
+    page,
+  }) => {
+    await spyOnSounds(page);
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await openGuidedRun(page);
+    await setSetting(page, 'Chime', false);
+    await guided.start.click();
+    await expect.poll(() => backend.frames.length).toBeGreaterThan(1);
+    await passSetupCheck(page, backend);
+    await advanceRun(page, backend, 5000);
+    expect(await soundsPlayed(page), 'sounds while the chime was off').toBe(0);
+
+    await setSetting(page, 'Chime', true);
+
+    await advanceRunUntil(page, backend, guided.countedTimer, 1000);
+    await expect.poll(() => soundsPlayed(page)).toBeGreaterThan(0);
+    const atCounting = await soundsPlayed(page);
+    await advanceRunUntil(page, backend, guided.startAgain);
+    await expect.poll(() => soundsPlayed(page)).toBeGreaterThan(atCounting);
+  });
+
+  test('plays nothing more once the chime is turned off in Settings during the warm-up', async ({ page }) => {
+    await spyOnSounds(page);
+    await page.clock.install();
+    const backend = await MockBackend.attach(page);
+    const guided = guidedPage(page);
+    await startRun(page, backend);
+    await advanceRun(page, backend, 5000);
+    await expectSetting(page, 'Chime', true);
+
+    await setSetting(page, 'Chime', false);
+    const atOff = await soundsPlayed(page);
+
+    await advanceRunUntil(page, backend, guided.countedTimer, 1000);
+    await advanceRunUntil(page, backend, guided.startAgain);
+    await expect(guided.headline('Done, but no reading this time.')).toBeVisible();
+    expect(await soundsPlayed(page), 'sounds after the chime was turned off').toBe(atOff);
   });
 });

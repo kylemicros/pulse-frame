@@ -67,7 +67,7 @@ const PLAIN_WORDS: ReadonlyMap<string, Words> = new Map<string, Words>([
     "SOCKET_UNAVAILABLE",
     {
       message: "Can't reach the pulse reader, so the run stopped.",
-      action: "Check pulse-frame is running on this computer, then press Start again.",
+      action: "Check pulse frame is running on this computer, then press Start again.",
     },
   ],
   [
@@ -75,14 +75,14 @@ const PLAIN_WORDS: ReadonlyMap<string, Words> = new Map<string, Words>([
     {
       message: "The pulse reader couldn't load the part that finds your face, so the run stopped.",
       action:
-        "Restart pulse-frame on this computer, then press Start again. If it keeps happening, its face finder needs installing again.",
+        "Restart pulse frame on this computer, then press Start again. If it keeps happening, its face finder needs installing again.",
     },
   ],
   [
     "BACKEND_FAILED",
     {
       message: "The pulse reader tripped over its own feet, so the run stopped.",
-      action: "Restart pulse-frame on this computer, then press Start again.",
+      action: "Restart pulse frame on this computer, then press Start again.",
     },
   ],
   [
@@ -97,7 +97,7 @@ const PLAIN_WORDS: ReadonlyMap<string, Words> = new Map<string, Words>([
     {
       message: "The pulse reader sent something this page can't read, so it was ignored. The numbers may stall.",
       action:
-        "If they stop moving, press Stop to end this run, then Start for a fresh one. If it keeps happening, update pulse-frame and restart it.",
+        "If they stop moving, press Stop to end this run, then Start for a fresh one. If it keeps happening, update pulse frame and restart it.",
     },
   ],
   ["BAD_FRAME", { message: "A split second of video couldn't be read, so it was skipped.", action: SKIPPED_ACTION }],
@@ -144,7 +144,7 @@ const PLAIN_WORDS: ReadonlyMap<string, Words> = new Map<string, Words>([
     "CAMERA_UNSUPPORTED",
     {
       message: "This browser won't share the camera here. Browsers only do that on a secure or local address.",
-      action: "Open pulse-frame at its local address in an up to date browser, then press Start.",
+      action: "Open pulse frame at its local address in an up to date browser, then press Start.",
     },
   ],
   [
@@ -230,13 +230,6 @@ export const VARIATION_WINDOW: Record<Exclude<Stage, "get-comfy">, Record<Variat
 
 export const LIVE_WINDOW_TEXT = "Last 20 s"
 
-export const PHASE_LINE: Record<Stage, string> = {
-  "get-comfy": "Step 1 of 4, get comfy",
-  "warm-up": "Step 2 of 4, warm-up",
-  counted: "Step 3 of 4, counted",
-  result: "Step 4 of 4, result",
-}
-
 export const CAMERA_CUE: Record<Stage, string> = {
   "get-comfy": "Face a window so the light is even.",
   "warm-up": "Keep your face in the oval. Look wherever you like.",
@@ -248,3 +241,11 @@ export const CAMERA_OFF_DONE = "Camera's off. Run finished."
 
 export const WATCH_TIP =
   "Checking against a watch? Open its history and read its average for the last minute of the run, the same window as the heart rate here."
+
+export const SKIN_OUTLINE_LINE = "Shows where we read your skin."
+
+export const CHIME_LINE = "A soft ding when counting starts and ends."
+
+export const CALIBRATION_LINE_START = "Shows or hides the Calibration box. Here because the address has"
+
+export const LOCK_WORDS = "Stays on this computer"

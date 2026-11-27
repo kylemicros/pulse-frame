@@ -3,7 +3,16 @@
 @import "@/styles/shadcn.css";
 @import "@fontsource-variable/jetbrains-mono";
 
-@custom-variant dark (@media (prefers-color-scheme: dark));
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not(.light), :root:not(.light) *) {
+      @slot;
+    }
+  }
+}
 
 :root {
   color-scheme: light dark;
@@ -57,8 +66,16 @@
   --ds-cam-text: #3d3d3d;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+:root.light {
+  color-scheme: light;
+}
+
+:root.dark {
+  color-scheme: dark;
+}
+
+:root {
+  @variant dark {
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);

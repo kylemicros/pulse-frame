@@ -87,7 +87,7 @@ export function shell(page: Page) {
     camera: guidedPage(page).video,
     footer: page.getByRole('contentinfo'),
     mitLine: page.getByRole('contentinfo').getByText(MIT_LINE, { exact: true }),
-    mainButton: main.getByRole('button', { name: /^(Start|Stop|Start again)$/ }),
+    mainButton: page.getByRole('button', { name: /^(Start|Stop|Start again)$/ }),
     details: (name: DetailsName): Locator => panel.getByRole('region', { name, exact: true }),
   };
 }

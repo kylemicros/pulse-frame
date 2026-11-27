@@ -1,7 +1,7 @@
 import { useState, type RefObject, type SyntheticEvent } from "react"
 import { FRAME_HEIGHT, FRAME_WIDTH } from "@/features/capture"
 import { PatchOverlay } from "@/features/guided-capture/components/patch-overlay"
-import { ToggleButton } from "@/features/guided-capture/components/toggle-button"
+import { PrivacyLock } from "@/features/guided-capture/components/privacy-lock"
 import type { FrameMessage } from "@/lib/socket/messages"
 
 type RunCameraProps = {
@@ -11,14 +11,14 @@ type RunCameraProps = {
   offText: string | null
   cue: string | null
   setupCue: string | null
+  outlineOn: boolean
 }
 
 type SourceSize = { width: number; height: number }
 
 const PLANNED_SIZE: SourceSize = { width: FRAME_WIDTH, height: FRAME_HEIGHT }
 
-export function RunCamera({ videoRef, live, scene, offText, cue, setupCue }: RunCameraProps) {
-  const [outlineOn, setOutlineOn] = useState(true)
+export function RunCamera({ videoRef, live, scene, offText, cue, setupCue, outlineOn }: RunCameraProps) {
   const [source, setSource] = useState(PLANNED_SIZE)
   const readSize = (event: SyntheticEvent<HTMLVideoElement>) => {
     const { videoWidth, videoHeight } = event.currentTarget
@@ -27,7 +27,7 @@ export function RunCamera({ videoRef, live, scene, offText, cue, setupCue }: Run
     }
   }
   return (
-    <div className="flex min-w-0 flex-col gap-3 lg:h-full lg:w-[min(100cqw,calc((100cqh-3.5rem)*16/9))]">
+    <div className="flex min-w-0 flex-col gap-3 lg:h-full lg:w-[min(100cqw,calc(100cqh*16/9))]">
       <div className="relative aspect-4/3 max-h-[60dvh] w-full overflow-hidden rounded-lg border border-(--ds-border) bg-(--ds-cam-bg) lg:aspect-auto lg:max-h-none lg:min-h-0 lg:flex-1">
         <video
           ref={videoRef}
@@ -53,7 +53,7 @@ export function RunCamera({ videoRef, live, scene, offText, cue, setupCue }: Run
           <PatchOverlay scene={scene} sourceWidth={source.width} sourceHeight={source.height} />
         ) : null}
         {offText === null ? null : (
-          <p className="pointer-events-none absolute inset-x-3 top-3 text-sm text-(--ds-cam-text)">{offText}</p>
+          <p className="pointer-events-none absolute inset-x-4 top-16.5 text-sm text-(--ds-cam-text)">{offText}</p>
         )}
         {setupCue === null ? null : (
           <p
@@ -68,8 +68,8 @@ export function RunCamera({ videoRef, live, scene, offText, cue, setupCue }: Run
             {cue}
           </p>
         )}
+        <PrivacyLock />
       </div>
-      <ToggleButton label="Skin outline" pressed={outlineOn} onToggle={() => setOutlineOn((on) => !on)} />
     </div>
   )
 }
