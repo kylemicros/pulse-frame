@@ -37,7 +37,7 @@ export function ThemeChoice({ choice, onChoose }: ThemeChoiceProps) {
           <Radio.Root
             key={value}
             value={value}
-            className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 border-l border-(--ds-edge) bg-(--ds-surface) text-[0.9375rem] font-semibold text-(--ds-text) first:border-l-0 focus-visible:outline-3 focus-visible:-outline-offset-3 focus-visible:outline-(--ds-count) data-checked:bg-(--ds-primary-bg) data-checked:font-bold data-checked:text-(--ds-primary-text)"
+            className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 border-l border-(--ds-edge) bg-(--ds-surface) text-[0.9375rem] font-semibold text-(--ds-text) first:border-l-0 not-data-checked:hover:bg-(--ds-surface-2) focus-visible:outline-3 focus-visible:-outline-offset-3 focus-visible:outline-(--ds-count) data-checked:bg-(--ds-primary-bg) data-checked:font-bold data-checked:text-(--ds-primary-text)"
           >
             <ChoiceIcon aria-hidden="true" size={18} />
             {label}

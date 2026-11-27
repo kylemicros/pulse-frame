@@ -5,6 +5,7 @@ import {
   advanceRunUntil,
   CALIBRATION_ROWS,
   calibrationBox,
+  drawnPrompt,
   FRAME_SPACING_MS,
   guidedPage,
   paceReplies,
@@ -119,6 +120,10 @@ async function expectOnlyMockedSockets({ page, backend, networkSocketUrls }: Ses
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.mouse.move(0, 0);
+  await shootPage(page, testInfo, name);
+}
+
+async function shootPage(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
     path: testInfo.outputPath(`${name}.png`),
     fullPage: true,
@@ -537,7 +542,7 @@ test.describe('guided page screenshots', () => {
     return async (page: Page, testInfo: TestInfo, name: string): Promise<void> => {
       const session = await openBuiltCheck(page, check);
       const guided = guidedPage(page);
-      const prompt = guided.setupPrompt.getByText(SETUP_PROMPTS[problem].prompt, { exact: true });
+      const prompt = drawnPrompt(page, SETUP_PROMPTS[problem].prompt);
 
       await paceUntil(page, session.backend, prompt, CHECK_SETTLE_MS, check.stepMs);
       await paceReplies(page, session.backend, CHECK_SETTLED_MS, check.stepMs);
@@ -559,7 +564,7 @@ test.describe('guided page screenshots', () => {
     await paceReplies(page, session.backend, CHECK_SETTLED_MS);
 
     await expect(guided.startAnyway).toBeVisible();
-    await expect(guided.setupPrompt.getByText(SETUP_PROMPTS.behind.prompt, { exact: true })).toBeVisible();
+    await expect(drawnPrompt(page, SETUP_PROMPTS.behind.prompt)).toBeVisible();
     await expect(guided.setupRow('Light').getByText('Not yet', { exact: true })).toBeVisible();
     for (const row of ['Distance', 'Stillness', 'Camera speed'] as const) {
       await expect(guided.setupRow(row).getByText('Good', { exact: true })).toBeVisible();
@@ -722,6 +727,16 @@ test.describe('guided page screenshots', () => {
     await capture(page, testInfo, name);
   }
 
+  async function startHovered(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+    const session = await openBuiltGuidedRun(page);
+    const guided = guidedPage(page);
+
+    await expect(guided.start).toBeVisible();
+    await guided.start.hover();
+    await expectOnlyMockedSockets(session);
+    await shootPage(page, testInfo, name);
+  }
+
   async function themeDarkChosen(page: Page, testInfo: TestInfo, name: string): Promise<void> {
     const session = await openBuiltGuidedRun(page);
 
@@ -739,6 +754,7 @@ test.describe('guided page screenshots', () => {
     { state: 'settings-open-counting', title: 'Settings open mid-run while counting', shoot: settingsOpenCounting },
     { state: 'lock-words', title: 'the camera lock showing its words on keyboard focus', shoot: lockWordsShown },
     { state: 'theme-dark-chosen', title: 'the page with Dark chosen in Settings', shoot: themeDarkChosen },
+    { state: 'start-hover', title: 'the main button on hover', shoot: startHovered },
     { state: 'idle', title: 'the guided run idle page', shoot: guidedIdle },
     {
       state: 'check-no-face',

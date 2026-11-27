@@ -4,6 +4,25 @@ export const PRIVACY_SENTENCE = 'Your video stays on this computer. No frame is 
 export const LOCK_WORDS = 'Stays on this computer';
 export const PAGE_BACKGROUND = { light: 'rgb(247, 247, 245)', dark: 'rgb(20, 20, 20)' } as const;
 
+export const THEME_KEY = 'theme';
+export const JUNK_THEME = 'purple<script>';
+export const LIGHT_MEDIA = '(prefers-color-scheme: light)';
+export const DARK_MEDIA = '(prefers-color-scheme: dark)';
+
+export type ThemeMetas = { light: string | null; dark: string | null };
+
+export function themeMetas(page: Page): Promise<ThemeMetas> {
+  return page.locator('head meta[name="theme-color"]').evaluateAll((metas) => {
+    const media = (content: string): string | null =>
+      metas.find((meta) => meta.getAttribute('content')?.toLowerCase() === content)?.getAttribute('media') ?? null;
+    return { light: media('#f7f7f5'), dark: media('#141414') };
+  });
+}
+
+export function saveTheme(page: Page, value: string): Promise<void> {
+  return page.addInitScript(([key, saved]) => localStorage.setItem(key, saved), [THEME_KEY, value]);
+}
+
 export type SettingName = 'Skin outline' | 'Chime' | 'Calibration numbers';
 export type ThemeChoice = 'Light' | 'Dark' | 'System';
 

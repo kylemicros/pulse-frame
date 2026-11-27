@@ -17,35 +17,35 @@ import {
   chooseTheme,
   CLEAR,
   closeSettings,
+  DARK_MEDIA,
   expectSetting,
   focusRing,
   hasNoBorder,
   holdsFocus,
   insideInertOrHidden,
+  JUNK_THEME,
+  LIGHT_MEDIA,
   openSettings,
   PAGE_BACKGROUND,
   pageBackground,
+  saveTheme,
   setSetting,
   SETTING_LINES,
   settingsPanel,
   tabTo,
   THEME_CHOICES,
+  THEME_KEY,
+  themeMetas,
 } from '../../support/settings';
 
 const TARGET_PX = 44;
 const MIN_ICON_CONTRAST = 3;
 const TAB_PRESSES = 12;
 const STILL_PX = 0.5;
-const THEME_KEY = 'theme';
-const JUNK_THEME = 'purple<script>';
-const LIGHT_MEDIA = '(prefers-color-scheme: light)';
-const DARK_MEDIA = '(prefers-color-scheme: dark)';
 
 type Rect = { x: number; y: number; width: number; height: number };
 
 type Stored = { localKeys: string[]; session: number; databases: number };
-
-type ThemeMetas = { light: string | null; dark: string | null };
 
 async function rectsOf(page: Page): Promise<Record<string, Rect>> {
   const stop = page.getByRole('button', { name: 'Stop', exact: true, includeHidden: true }).filter({ visible: true });
@@ -92,14 +92,6 @@ function storedInBrowser(page: Page): Promise<Stored> {
     session: sessionStorage.length,
     databases: (await indexedDB.databases()).length,
   }));
-}
-
-function themeMetas(page: Page): Promise<ThemeMetas> {
-  return page.locator('head meta[name="theme-color"]').evaluateAll((metas) => {
-    const media = (content: string): string | null =>
-      metas.find((meta) => meta.getAttribute('content')?.toLowerCase() === content)?.getAttribute('media') ?? null;
-    return { light: media('#f7f7f5'), dark: media('#141414') };
-  });
 }
 
 test.describe('the Settings gear on a desktop', () => {
@@ -544,11 +536,29 @@ test.describe('the theme control', () => {
     await expect.poll(() => themeMetas(page)).toEqual({ light: LIGHT_MEDIA, dark: DARK_MEDIA });
   });
 
+  test('still moves the browser theme colour after a reload with Dark saved, back to the system for System and to Light', async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await saveTheme(page, 'dark');
+    await MockBackend.attach(page);
+    await openGuidedRun(page);
+    await expect.poll(() => themeMetas(page)).toEqual({ light: 'not all', dark: 'all' });
+
+    await chooseTheme(page, 'System');
+
+    await expect.poll(() => themeMetas(page)).toEqual({ light: LIGHT_MEDIA, dark: DARK_MEDIA });
+
+    await chooseTheme(page, 'Light');
+
+    await expect.poll(() => themeMetas(page)).toEqual({ light: 'all', dark: 'not all' });
+  });
+
   for (const colorScheme of ['light', 'dark'] as const) {
     test(`shows the System look under a ${colorScheme} system setting and leaves an unknown stored theme as it is`, async ({
       page,
     }) => {
-      await page.addInitScript(([key, junk]) => localStorage.setItem(key, junk), [THEME_KEY, JUNK_THEME]);
+      await saveTheme(page, JUNK_THEME);
       await page.emulateMedia({ colorScheme });
       await MockBackend.attach(page);
       const settings = settingsPanel(page);

@@ -31,7 +31,7 @@ export function RunResults({ result }: RunResultsProps) {
   return (
     <section
       aria-labelledby={headingId}
-      className="flex min-w-0 flex-col gap-3.5 rounded-xl border border-(--ds-border) bg-(--ds-surface) p-5 shadow-[0_10px_30px_rgba(0,0,0,0.08)] md:gap-5 md:px-10 md:py-8 lg:min-h-0 lg:overflow-y-auto"
+      className="flex min-w-0 animate-phase-in flex-col gap-3.5 rounded-xl border border-(--ds-border) bg-(--ds-surface) p-5 shadow-[0_10px_30px_rgba(0,0,0,0.08)] motion-reduce:animate-none md:gap-5 md:px-10 md:py-8 lg:min-h-0 lg:overflow-y-auto"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id={headingId} className="inline-flex items-center gap-2 text-base font-bold">

@@ -64,6 +64,8 @@ export const SETUP_PROMPTS: Record<SetupProblem, Prompt> = {
 export const SETUP_ORDER: SetupProblem[] = ['noFace', 'far', 'behind', 'dark', 'bright', 'slow', 'moving'];
 export const SETUP_ROWS: SetupRow[] = ['Distance', 'Light', 'Stillness', 'Camera speed'];
 export const ALL_GOOD_PROMPT = 'All good. Hold that.';
+export const BOLD = /^[6-9]00$/;
+const CAMERA_CHIP_MIN_WIDTH_PX = 768;
 export const START_ANYWAY_SAID = 'You can start anyway now.';
 
 export function startsWith(text: string): RegExp {
@@ -120,6 +122,12 @@ export function guidedPage(page: Page) {
     disclaimer: page.getByRole('contentinfo').getByText(DISCLAIMER, { exact: true }),
     alert: main.getByRole('alert'),
   };
+}
+
+export function drawnPrompt(page: Page, text: string): Locator {
+  const guided = guidedPage(page);
+  const width = page.viewportSize()?.width ?? CAMERA_CHIP_MIN_WIDTH_PX;
+  return width >= CAMERA_CHIP_MIN_WIDTH_PX ? guided.cameraCue(text) : guided.setupPrompt.getByText(text, { exact: true });
 }
 
 export const CALIBRATION_ROWS = [

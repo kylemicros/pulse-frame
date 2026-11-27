@@ -2,7 +2,26 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Page } from '@playwright/test';
 import { build, preview } from 'vite';
+
+type CspRecord = { violations: string[] };
+
+type CspWindow = Window & { cspRecord: CspRecord };
+
+export async function recordCspViolations(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const record: CspRecord = { violations: [] };
+    Object.defineProperty(globalThis, 'cspRecord', { value: record });
+    document.addEventListener('securitypolicyviolation', (event) => {
+      record.violations.push(`${event.violatedDirective} ${event.blockedURI}`);
+    });
+  });
+}
+
+export function cspViolations(page: Page): Promise<string[]> {
+  return page.evaluate(() => [...(globalThis as unknown as CspWindow).cspRecord.violations]);
+}
 
 export const FRONTEND_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 

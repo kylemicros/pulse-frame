@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { CAMERA_STATES, reachState } from '../../support/app-shell';
+import { CAMERA_STATES, reachState, startRunAt } from '../../support/app-shell';
 import { guidedPage, openGuidedRun } from '../../support/guided-page';
 import { MockBackend } from '../../support/mock-backend';
 import { boxOf } from '../../support/page-helpers';
+import { finishResultRun, RANGED_READING } from '../../support/result-states';
 import { buttonLook, focusRing, LOCK_WORDS, tabTo, underAriaHidden } from '../../support/settings';
 
 const CORNER_PX = 24;
@@ -114,6 +115,28 @@ test.describe('the privacy lock on the camera on a desktop', () => {
     expect(hovered.shadow, 'the shadow on hover').toBe(resting.shadow);
   });
 
+  test('does not show the lock words after Start again when they were open from the keyboard as the run ended', async ({
+    page,
+  }) => {
+    const guided = guidedPage(page);
+    const backend = await startRunAt(page, '/');
+    await page.mouse.move(0, 0);
+    await tabTo(page, guided.lock);
+    await expect(guided.lockWords).toBeVisible();
+
+    await finishResultRun(page, backend, RANGED_READING);
+
+    await expect(guided.lock).toBeHidden();
+    await expect(guided.startAgain).toBeFocused();
+    const framesBefore = backend.frames.length;
+
+    await page.keyboard.press('Enter');
+
+    await expect.poll(() => backend.frames.length).toBeGreaterThan(framesBefore + 1);
+    await expect(guided.lock).toBeVisible();
+    await expect(guided.lockWords).toBeHidden();
+  });
+
   for (const state of CAMERA_STATES) {
     test(`shows the lock on the camera in the ${state} state`, async ({ page }) => {
       await reachState(page, state);
@@ -146,6 +169,27 @@ test.describe('the privacy lock on a touch phone', () => {
 
     await guided.lock.tap();
 
+    await expect(guided.lockWords).toBeHidden();
+  });
+
+  test('does not show the lock words after Start again when they were open from a tap as the run ended', async ({
+    page,
+  }) => {
+    const guided = guidedPage(page);
+    const backend = await startRunAt(page, '/');
+    await guided.lock.tap();
+    await expect(guided.lockWords).toBeVisible();
+
+    await finishResultRun(page, backend, RANGED_READING);
+
+    await expect(guided.lock).toBeHidden();
+    await expect(guided.startAgain).toBeFocused();
+    const framesBefore = backend.frames.length;
+
+    await page.keyboard.press('Enter');
+
+    await expect.poll(() => backend.frames.length).toBeGreaterThan(framesBefore + 1);
+    await expect(guided.lock).toBeVisible();
     await expect(guided.lockWords).toBeHidden();
   });
 

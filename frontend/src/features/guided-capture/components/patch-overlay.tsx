@@ -4,7 +4,7 @@ import { overlayPoints } from "@/features/guided-capture/lib/overlay-geometry"
 import { PATCH_NAMES, type FrameMessage, type PatchName, type Point } from "@/lib/socket/messages"
 
 const MIRRORED = true
-const OUTLINE_GREEN = "#009e73"
+const OUTLINE_LINE = "#ffffff"
 const OUTLINE_EDGE = "#141414"
 const LINE_WIDTH = 2
 const EDGE_WIDTH = 5
@@ -56,7 +56,7 @@ export function PatchOverlay({ scene, sourceWidth, sourceHeight }: PatchOverlayP
             data-testid={`patch-outline-${name}`}
             points={points}
             fill="none"
-            stroke={OUTLINE_GREEN}
+            stroke={OUTLINE_LINE}
             strokeWidth={LINE_WIDTH}
             strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"

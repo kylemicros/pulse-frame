@@ -3,6 +3,8 @@ import { SETUP_MIN_FACE_SPAN_PX } from '../../../src/features/guided-capture/lib
 import {
   ALL_GOOD_PROMPT,
   announcements,
+  BOLD,
+  drawnPrompt,
   expectCurrentStep,
   expectStoppedStep,
   FRAME_SPACING_MS,
@@ -75,7 +77,6 @@ const ALL_GOOD_MS = 3000;
 const START_ANYWAY_MS = 15000;
 const SETTLE_MS = 2 * PROMPT_HOLD_MS + 1000;
 const FAR_SPAN_PX = SETUP_MIN_FACE_SPAN_PX / 2;
-const BOLD = /^[6-9]00$/;
 const CODED_TEXT = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/;
 
 type Setup = { scene: Scene; light: Light; stepMs: number };
@@ -145,7 +146,7 @@ async function expectOnlyPrompt(page: Page, problem: SetupProblem): Promise<void
   const { prompt, line } = SETUP_PROMPTS[problem];
   await expect(guided.headline('Quick setup check')).toBeVisible();
   await expect(guided.setupPrompt).toHaveText(`${prompt} ${line}`);
-  await expect(guided.setupPrompt.getByText(prompt, { exact: true })).toHaveCSS('font-weight', BOLD);
+  await expect(guided.cameraCue(prompt)).toHaveCSS('font-weight', BOLD);
   await expect(guided.cameraCue(prompt)).toBeVisible();
   expect(await hiddenFromScreenReaders(guided.cameraCue(prompt)), 'the camera cue is hidden from screen readers').toBe(true);
   await expect(guided.spoken(prompt)).toHaveCount(1);
@@ -272,8 +273,7 @@ test.describe('setup check before the guided run', () => {
 
   test('keeps each prompt up at least 2 s while the problems keep flipping', async ({ page }) => {
     const { backend } = await openCheck(page, { scene: FAR });
-    const guided = guidedPage(page);
-    await paceUntil(page, backend, guided.setupPrompt.getByText(SETUP_PROMPTS.far.prompt, { exact: true }), SETTLE_MS);
+    await paceUntil(page, backend, drawnPrompt(page, SETUP_PROMPTS.far.prompt), SETTLE_MS);
 
     for (let flip = 0; flip < 24; flip += 1) {
       if (flip % 2 === 0) {
@@ -311,7 +311,7 @@ test.describe('setup check before the guided run', () => {
     await expect(guided.setupPrompt).toHaveText(
       /^All good\. Hold that\. Warm-up starts in [1-3] s\. Stay just like that\.$/,
     );
-    await expect(guided.setupPrompt.getByText(ALL_GOOD_PROMPT, { exact: true })).toHaveCSS('font-weight', BOLD);
+    await expect(guided.cameraCue(ALL_GOOD_PROMPT)).toHaveCSS('font-weight', BOLD);
     await expect(guided.cameraCue(ALL_GOOD_PROMPT)).toBeVisible();
     await expectRows(page, []);
     await expect(guided.anywayLine).toHaveCount(0);

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { startBuiltPreview, type BuiltPreview } from '../support/built-preview';
+import { cspViolations, recordCspViolations, startBuiltPreview, type BuiltPreview } from '../support/built-preview';
 import { guidedPage } from '../support/guided-page';
 import { MockBackend } from '../support/mock-backend';
 import { collectPageErrors, longestPathCommands, videoIsPlaying } from '../support/page-helpers';
@@ -17,8 +17,6 @@ const EXPECTED_POLICY: Record<string, string[]> = {
   'base-uri': ["'none'"],
   'form-action': ["'none'"],
 };
-
-type Violations = { violations: string[] };
 
 function parsePolicy(policy: string): Record<string, string[]> {
   return Object.fromEntries(
@@ -78,13 +76,7 @@ test.describe('content security policy', () => {
 
   test('serves the built page with no content security policy violation during a guided run with the skin outline', async ({ page }) => {
     const errors = collectPageErrors(page);
-    await page.addInitScript(() => {
-      const record: Violations = { violations: [] };
-      Object.defineProperty(globalThis, 'cspRecord', { value: record });
-      document.addEventListener('securitypolicyviolation', (event) => {
-        record.violations.push(`${event.violatedDirective} ${event.blockedURI}`);
-      });
-    });
+    await recordCspViolations(page);
     const backend = await MockBackend.attach(page);
     const guided = guidedPage(page);
     const url = site?.url ?? '';
@@ -99,8 +91,7 @@ test.describe('content security policy', () => {
     await expect(guided.liveReadings.getByText(/^(71\.2|71)$/)).toBeVisible();
     await expect.poll(() => longestPathCommands(guided.pulseTrace)).toBeGreaterThan(10);
 
-    const violations = await page.evaluate(() => (globalThis as unknown as Window & { cspRecord: Violations }).cspRecord.violations);
-    expect(violations).toEqual([]);
+    expect(await cspViolations(page)).toEqual([]);
     expect(errors).toEqual([]);
   });
 });
