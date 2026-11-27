@@ -23,6 +23,7 @@ ICONS = (
     "frontend/public/icon-512.png",
     "frontend/public/icon-maskable-512.png",
 )
+SHOWCASE_PICTURE = "showcase/sample-result.png"
 
 
 def joined(*parts):
@@ -669,7 +670,7 @@ class PlantedLeakTests(unittest.TestCase):
         self.assertEqual(found(moved.scan()), {("image", "docs/astronaut.jpg"), ("binary file", "docs/astronaut.jpg")})
 
     def test_pinned_icons_pass_and_changed_bytes_or_an_unpinned_neighbour_are_found(self):
-        for icon in ICONS:
+        for icon in (*ICONS, SHOWCASE_PICTURE):
             with self.subTest(icon=icon):
                 pinned = (REPO_ROOT / icon).read_bytes()
                 repo = Repo(self)

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { inspectSvg } from '../support/brand';
 import { buildSite, type BuiltSite } from '../support/built-preview';
+import { SHOWCASE_ROOT } from '../support/showcase-server';
 
 test.describe('shipped SVG files', () => {
   let site: BuiltSite | null = null;
@@ -92,6 +93,21 @@ test.describe('shipped SVG files', () => {
       expect(report.root, `${path} is not an SVG document`).toBe('svg');
       expect(report.findings, `unsafe content in ${path}`).toEqual([]);
       expect(report.viewBox, `${path} lost its viewBox`).not.toBeNull();
+    }
+  });
+
+  test('ships every showcase SVG with no script, event attribute, foreignObject or external link', async ({ page }) => {
+    const paths = readdirSync(SHOWCASE_ROOT, { recursive: true, encoding: 'utf8' })
+      .filter((path) => path.toLowerCase().endsWith('.svg'))
+      .toSorted();
+    expect(paths.length).toBeGreaterThan(0);
+
+    for (const path of paths) {
+      const report = await inspectSvg(page, readFileSync(join(SHOWCASE_ROOT, path), 'utf8'));
+
+      expect(report.root, `showcase/${path} is not an SVG document`).toBe('svg');
+      expect(report.findings, `unsafe content in showcase/${path}`).toEqual([]);
+      expect(report.viewBox, `showcase/${path} has no viewBox`).not.toBeNull();
     }
   });
 });
