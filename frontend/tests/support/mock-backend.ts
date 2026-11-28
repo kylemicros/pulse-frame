@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import type { Page, WebSocketRoute } from '@playwright/test';
+import { recordFrameTiming, type FrameCallbacks } from './frame-timing';
 import { recordSockets, STREAM_URL } from './socket-recorder';
 
 export { STREAM_URL };
@@ -207,7 +208,8 @@ export class MockBackend {
   readonly sentDuplicates: SentDuplicate[] = [];
   private readonly routes = new Map<number, WebSocketRoute>();
 
-  static async attach(page: Page): Promise<MockBackend> {
+  static async attach(page: Page, camera: FrameCallbacks = 'capture time'): Promise<MockBackend> {
+    await recordFrameTiming(page, camera);
     await recordSockets(page);
     const backend = new MockBackend();
     await page.routeWebSocket(STREAM_URL, (ws) => backend.connect(ws));

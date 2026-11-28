@@ -27,7 +27,7 @@ export const SLOW_STEP_MS = Math.ceil(2000 / SETUP_MIN_FPS);
 const PASS_CHECK_BUDGET_MS = 8000;
 const PACE_SLICE_STEPS = 5;
 const PAUSE_AHEAD_MS = 100;
-const PACED_POLL = { intervals: [5, 10, 20] };
+const PACED_POLL = { intervals: [1, 2, 5] };
 
 export type SetupProblem = 'noFace' | 'far' | 'behind' | 'dark' | 'bright' | 'slow' | 'moving';
 export type SetupRow = 'Distance' | 'Light' | 'Stillness' | 'Camera speed';

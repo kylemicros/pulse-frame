@@ -8,6 +8,7 @@ import {
   openCamera,
   START_FAILED,
   stopCamera,
+  VideoFrameClock,
 } from "@/features/capture"
 import { plainError } from "@/features/guided-capture/lib/run-copy"
 import {
@@ -45,13 +46,18 @@ export class MonitorSession {
   private ended = false
   private scheduled = false
   private inFlightT: number | null = null
-  private lastSendMs = Number.NEGATIVE_INFINITY
+  private nextStartMs = Number.NEGATIVE_INFINITY
+  private lastSocketSendMs = Number.NEGATIVE_INFINITY
+  private lastStampMs = Number.NEGATIVE_INFINITY
   private pumpTimer: number | undefined = undefined
+  private holdTimer: number | undefined = undefined
   private readonly trackWatch = new AbortController()
+  private readonly frameClock: VideoFrameClock
 
   constructor(video: HTMLVideoElement, emit: (event: SessionEvent) => void) {
     this.video = video
     this.emit = emit
+    this.frameClock = new VideoFrameClock(video, (frameMs) => this.cameraFrame(frameMs))
   }
 
   async start(): Promise<void> {
@@ -92,6 +98,7 @@ export class MonitorSession {
     if (this.ended) {
       return
     }
+    this.frameClock.start()
     this.emit({ type: "running" })
     this.client = new StreamClient(STREAM_URL, {
       onOpen: () => this.opened(),
@@ -110,6 +117,8 @@ export class MonitorSession {
     this.ended = true
     this.endSetupCheck()
     globalThis.clearTimeout(this.pumpTimer)
+    globalThis.clearTimeout(this.holdTimer)
+    this.frameClock.stop()
     this.trackWatch.abort()
     this.client?.close()
     this.client = null
@@ -183,27 +192,43 @@ export class MonitorSession {
     this.pump(0)
   }
 
-  private pump(minimumWaitMs: number): void {
-    if (this.ended || this.scheduled || this.inFlightT !== null || this.client === null || !this.client.isOpen()) {
+  private canStart(): boolean {
+    return !this.ended && !this.scheduled && this.inFlightT === null && this.client !== null && this.client.isOpen()
+  }
+
+  private cameraFrame(frameMs: number): void {
+    if (!this.canStart() || Math.floor(frameMs) <= Math.floor(this.lastStampMs)) {
       return
     }
     this.scheduled = true
-    const spacing = this.lastSendMs + FRAME_SPACING_MS - performance.now()
-    const wait = Math.max(minimumWaitMs, Math.ceil(spacing), 0)
-    globalThis.clearTimeout(this.pumpTimer)
-    this.pumpTimer = globalThis.setTimeout(() => void this.sendFrame(), wait)
+    void this.sendFrame(frameMs, performance.now())
   }
 
-  private async sendFrame(): Promise<void> {
+  private pump(minimumWaitMs: number): void {
+    if (this.frameClock.supported() || !this.canStart()) {
+      return
+    }
+    this.scheduled = true
+    const spacing = this.nextStartMs - performance.now()
+    const wait = Math.max(minimumWaitMs, Math.ceil(spacing), 0)
+    globalThis.clearTimeout(this.pumpTimer)
+    this.pumpTimer = globalThis.setTimeout(() => this.sendTimedFrame(), wait)
+  }
+
+  private sendTimedFrame(): void {
     if (this.ended) {
       return
     }
-    const captureMs = performance.now()
-    if (captureMs - this.lastSendMs < FRAME_SPACING_MS) {
+    const startMs = performance.now()
+    if (startMs < this.nextStartMs) {
       this.scheduled = false
       this.pump(0)
       return
     }
+    void this.sendFrame(startMs, startMs)
+  }
+
+  private async sendFrame(captureMs: number, startMs: number): Promise<void> {
     let frame: ArrayBuffer | null
     try {
       frame = await encodeFrame(this.video, this.canvas, captureMs)
@@ -216,15 +241,30 @@ export class MonitorSession {
     if (this.ended) {
       return
     }
-    this.scheduled = false
     if (frame === null) {
+      this.scheduled = false
       this.pump(VIDEO_NOT_READY_RETRY_MS)
       return
     }
+    this.deliver(frame, captureMs, startMs)
+  }
+
+  private deliver(frame: ArrayBuffer, captureMs: number, startMs: number): void {
+    if (this.ended) {
+      return
+    }
+    const holdMs = this.lastSocketSendMs + FRAME_SPACING_MS - performance.now()
+    if (holdMs > 0) {
+      this.holdTimer = globalThis.setTimeout(() => this.deliver(frame, captureMs, startMs), Math.ceil(holdMs))
+      return
+    }
+    this.scheduled = false
     if (this.client === null || !this.client.send(frame)) {
       return
     }
     this.inFlightT = Math.floor(captureMs)
-    this.lastSendMs = performance.now()
+    this.lastStampMs = captureMs
+    this.lastSocketSendMs = performance.now()
+    this.nextStartMs = startMs + FRAME_SPACING_MS
   }
 }

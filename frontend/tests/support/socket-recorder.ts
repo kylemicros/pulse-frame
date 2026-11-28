@@ -15,6 +15,12 @@ type SocketRecord = {
 
 type RecorderWindow = Window & { socketRecords: SocketRecord[] };
 
+export type FrameSend = { order: number; at: number; captureMs: number };
+
+type SendLog = { order: number; sends: FrameSend[] };
+
+type SendLogWindow = Window & { frameTiming?: SendLog };
+
 export async function recordSockets(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const records: SocketRecord[] = [];
@@ -44,6 +50,15 @@ export async function recordSockets(page: Page): Promise<void> {
               record.messages.push({ at: performance.now(), text: event.data });
             }
           });
+        }
+
+        override send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+          const log = (globalThis as unknown as SendLogWindow).frameTiming;
+          if (log !== undefined && data instanceof ArrayBuffer && data.byteLength >= 8) {
+            log.order += 1;
+            log.sends.push({ order: log.order, at: performance.now(), captureMs: new DataView(data).getFloat64(0, true) });
+          }
+          super.send(data);
         }
       };
     let current = wrap(globalThis.WebSocket);

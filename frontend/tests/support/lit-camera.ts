@@ -5,6 +5,7 @@ import {
   SETUP_NEAR_WHITE,
 } from '../../src/features/guided-capture/lib/setup-check';
 import { faceScene, FRAME_HEIGHT_PX, FRAME_WIDTH_PX, outlinePoints } from './mock-backend';
+import { installCameraCadence, type CadenceWindow } from './page-helpers';
 
 export type Light = 'even' | 'behind' | 'behind-dark' | 'dark' | 'bright';
 
@@ -37,12 +38,13 @@ function defaultFaceBox(): Box {
 }
 
 export async function installLitCamera(page: Page, light: Light): Promise<void> {
+  await installCameraCadence(page);
   await page.addInitScript(
     ({ box, shade, width, height }) => {
       let current = shade;
       const surfaces: Array<{ context: CanvasRenderingContext2D; stream: MediaStream }> = [];
       const paint = (surface: { context: CanvasRenderingContext2D; stream: MediaStream }) => {
-        const { context, stream } = surface;
+        const { context } = surface;
         const { face, around } = current;
         context.fillStyle = `rgb(${around}, ${around}, ${around})`;
         context.fillRect(0, 0, width, height);
@@ -53,9 +55,6 @@ export async function installLitCamera(page: Page, light: Light): Promise<void> 
           Math.ceil((box.right - box.left) * width),
           Math.ceil((box.bottom - box.top) * height),
         );
-        for (const track of stream.getVideoTracks()) {
-          (track as MediaStreamTrack & { requestFrame?: () => void }).requestFrame?.();
-        }
       };
       Object.defineProperty(globalThis, 'litCamera', {
         value: {
@@ -75,7 +74,7 @@ export async function installLitCamera(page: Page, light: Light): Promise<void> 
         }
         const surface = { context, stream: canvas.captureStream(0) };
         surfaces.push(surface);
-        paint(surface);
+        (globalThis as unknown as CadenceWindow).cameraCadence(surface.stream, () => paint(surface));
         return surface.stream;
       };
     },
