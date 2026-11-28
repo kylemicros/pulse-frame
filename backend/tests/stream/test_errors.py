@@ -21,7 +21,6 @@ from tests.stream.wire import (
     FakeClock,
     ProcessorFactory,
     Stream,
-    Turn,
     assert_error,
     byte_needles,
     frame_message,
@@ -29,6 +28,7 @@ from tests.stream.wire import (
     header,
     leaked_points,
     open_stream,
+    outline_points,
     padded_to,
     recording_factory,
     rendered,
@@ -83,16 +83,6 @@ def landmark_texts(face_model: Path, rgb: NDArray[np.uint8]) -> list[str]:
         face = tracker.detect(rgb, START_MS)
     assert face is not None
     return [repr(float(v)) for v in face.points[:LANDMARKS_CHECKED].ravel()]
-
-
-def outline_points(turns: list[Turn]) -> list[list[float]]:
-    points: list[list[float]] = []
-    for turn in turns:
-        if turn.reply["type"] == "frame":
-            for patch in turn.reply["patches"].values():
-                if patch["usable"]:
-                    points.extend(patch["outline"])
-    return points
 
 
 def test_wire_table_covers_exactly_the_contract_codes_with_fixed_text() -> None:

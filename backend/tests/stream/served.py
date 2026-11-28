@@ -5,10 +5,12 @@ import importlib
 import inspect
 import json
 import logging
+import os
 import runpy
 import struct
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -45,6 +47,11 @@ TURN_TYPES = ("frame", "error")
 MAX_TURN_MESSAGES = 4
 WEBSOCKET_KEY_BYTES = 16
 PROCESSOR_CLOSED = threading.Event()
+BEAT_SIGNAL_FRAMES = 29
+PACE_MS = 36.0
+DEVICES = frozenset({os.devnull})
+STORE_MODULES = ("psycopg", "pulse_frame.store")
+WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND
 
 
 def served_frame() -> bytes:
@@ -107,8 +114,8 @@ def finish_modules(record: Record) -> None:
     record["modules"] = {name: name in sys.modules for name in WATCHED_IMPORTS}
 
 
-def run_entry_point(record: Record) -> None:
-    sys.argv = [STREAM_MODULE]
+def run_entry_point(record: Record, args: tuple[str, ...] = ()) -> None:
+    sys.argv = [STREAM_MODULE, *args]
     atexit.register(finish_modules, record)
     runpy.run_module(STREAM_MODULE, run_name="__main__", alter_sys=True)
 
@@ -179,6 +186,43 @@ def frame_only_client(record: Record) -> None:
     with connect(uri, origin=ALLOWED_ORIGIN, open_timeout=REPLY_WAIT_S) as connection:
         connection.send(served_frame())
         record["replies"] = receive_turn(connection)
+
+
+def beat_signal_client(record: Record) -> None:
+    from websockets.sync.client import connect
+
+    port = record["listening"][0][1]
+    uri = f"ws://127.0.0.1:{port}{ENDPOINT}"
+    jpeg = ASTRONAUT.read_bytes()
+    turns: list[list[object]] = []
+    with connect(uri, origin=ALLOWED_ORIGIN, open_timeout=REPLY_WAIT_S) as connection:
+        for k in range(BEAT_SIGNAL_FRAMES):
+            connection.send(struct.pack("<d", FRAME_TIME_MS + k * PACE_MS) + jpeg)
+            turns.append(receive_turn(connection))
+            time.sleep(PACE_MS / 1000.0)
+    record["beat_signal_replies"] = turns
+    record["processor_closed"] = PROCESSOR_CLOSED.wait(CLOSE_WAIT_S)
+
+
+def opens_for_writing(args: tuple[object, ...]) -> bool:
+    path, mode, flags = args[:3]
+    if isinstance(path, int) or "__pycache__" in str(path) or str(path) in DEVICES:
+        return False
+    if isinstance(mode, str):
+        return any(letter in mode for letter in "wax+")
+    return isinstance(flags, int) and bool(flags & WRITE_FLAGS)
+
+
+def watch_writes(record: Record) -> None:
+    written: list[str] = []
+    record["written"] = written
+    record["watching_writes"] = True
+
+    def audit(event: str, args: tuple[object, ...]) -> None:
+        if event == "open" and record["watching_writes"] and opens_for_writing(args):
+            written.append(str(args[0]))
+
+    sys.addaudithook(audit)
 
 
 def stop_at_once(record: Record) -> None:
@@ -295,6 +339,24 @@ def scenario_serve(path: Path) -> None:
     run_entry_point(record)
 
 
+def scenario_serve_beat_signal(path: Path, *args: str) -> None:
+    record = startup_record(path)
+    watch_writes(record)
+    record_client_errors(record)
+    instrument_server(record, beat_signal_client)
+    run_entry_point(record, args)
+    record["watching_writes"] = False
+    record["store_modules"] = {name: name in sys.modules for name in STORE_MODULES}
+
+
+def scenario_bad_argument(path: Path, *args: str) -> None:
+    record = startup_record(path)
+    watch_sandbox(record["events"])
+    watch_model_check(record["events"], None)
+    instrument_server(record, stop_at_once)
+    run_entry_point(record, args)
+
+
 def scenario_serve_unsupported(path: Path) -> None:
     record = startup_record(path)
     record["unsupported"] = apply_sandbox_on("linux")
@@ -329,6 +391,8 @@ def scenario_import_package(path: Path) -> None:
 
 SCENARIOS: dict[str, Callable[..., None]] = {
     "serve": scenario_serve,
+    "serve-beat-signal": scenario_serve_beat_signal,
+    "bad-argument": scenario_bad_argument,
     "serve-unsupported": scenario_serve_unsupported,
     "broken-sandbox": scenario_broken_sandbox,
     "model-missing": scenario_model_missing,

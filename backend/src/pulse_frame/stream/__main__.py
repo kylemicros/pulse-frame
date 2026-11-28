@@ -1,6 +1,9 @@
+import argparse
 import copy
 import logging
 import sys
+from collections.abc import Sequence
+from typing import NoReturn, override
 
 import uvicorn
 from uvicorn.config import LOGGING_CONFIG
@@ -16,15 +19,42 @@ WS_IMPLEMENTATION = "websockets-sansio"
 PROTOCOL_CAP_BYTES = 256 * 1024
 TRANSPORT_LOGGERS = ("uvicorn", "uvicorn.error", "websockets")
 APP_LOGGER = "pulse_frame"
+BAD_ARGUMENT = "BAD_ARGUMENT"
+BAD_ARGUMENT_EXIT = 2
+ARGUMENT_ACTION = (
+    "The only option is --diagnostics; start again with it, or with no option."
+)
 
 
 def main() -> None:
+    args = parse_args(sys.argv[1:])
     try:
         prepare()
     except (SandboxError, VisionError) as error:
         print(f"{error.code}: {error.message} {error.action}", file=sys.stderr)
         raise SystemExit(1) from error
-    serve()
+    serve(diagnostics=args.diagnostics)
+
+
+class CodedArgumentParser(argparse.ArgumentParser):
+    @override
+    def error(self, message: str) -> NoReturn:
+        print(f"{BAD_ARGUMENT}: {message}. {ARGUMENT_ACTION}", file=sys.stderr)
+        raise SystemExit(BAD_ARGUMENT_EXIT)
+
+
+def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = CodedArgumentParser(
+        prog="python -m pulse_frame.stream",
+        description="Run the local pulse frame stream server on 127.0.0.1.",
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="log one beat_signal line of numbers per second of each session",
+    )
+    return parser.parse_args(argv)
 
 
 def prepare() -> None:
@@ -34,11 +64,11 @@ def prepare() -> None:
     ensure_model(download=False)
 
 
-def serve() -> None:
+def serve(diagnostics: bool = False) -> None:
     from pulse_frame.stream.app import create_app
 
     config = uvicorn.Config(
-        create_app(),
+        create_app(diagnostics=diagnostics),
         host=HOST,
         port=PORT,
         reload=False,

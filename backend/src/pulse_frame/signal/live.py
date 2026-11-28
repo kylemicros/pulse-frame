@@ -42,6 +42,14 @@ class LiveHrv:
             return None
         return self._first_ms + COUNTED_AFTER_MS
 
+    @property
+    def newest_ms(self) -> float | None:
+        return self._newest_ms
+
+    @property
+    def had_reading(self) -> bool:
+        return self._had_reading
+
     def add(
         self, timestamp_ms: float, regions: RegionColours | None, moving: bool = False
     ) -> None:
@@ -68,6 +76,9 @@ class LiveHrv:
             if interval.start_ms > self._kept_until_ms
         ]
         return [*self._kept, *unkept]
+
+    def window_checks(self) -> list[WindowCheck]:
+        return self._tracker.window_checks()
 
     def no_reading(self) -> NoReading | None:
         if self._newest_ms is None:
