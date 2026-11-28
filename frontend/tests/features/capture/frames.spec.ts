@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { expectQuietRef, guidedPage, startRun } from '../../support/guided-page';
+import { expectQuietRef, guidedPage, startCheck, startRun } from '../../support/guided-page';
 import { JPEG_CAP_BYTES, jpegQuality, jpegSize } from '../../support/jpeg';
 import { MockBackend } from '../../support/mock-backend';
 import {
@@ -41,6 +41,21 @@ test.describe('captured frames', () => {
       expect([frame.jpeg[0], frame.jpeg[1]]).toEqual([0xff, 0xd8]);
       expect(jpegSize(frame.jpeg)).toEqual({ width: 640, height: 480 });
     }
+  });
+
+  test("sends rising whole ms capture times from the browser's own frame callback on the real clock", async ({ page }) => {
+    const backend = await MockBackend.attach(page, 'browser');
+
+    await startCheck(page, backend);
+    await waitForMoreFrames(backend, 10);
+    const nowInPage = await pageNow(page);
+
+    const wholeMs = backend.frames.map((frame) => Math.floor(frame.captureMs));
+    expect(wholeMs.length).toBeGreaterThanOrEqual(10);
+    expect(wholeMs.filter((ms, index) => index > 0 && ms <= wholeMs[index - 1]), 'stamps that did not rise').toEqual([]);
+    expect(wholeMs.every((ms) => ms > 0 && ms <= nowInPage)).toBe(true);
+    expect(backend.textMessages).toEqual([]);
+    await expect(guidedPage(page).alert).toHaveCount(0);
   });
 
   test('keeps capture times rising with real clock readings across a hidden tab and Start again', async ({ page }) => {

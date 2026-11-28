@@ -14,3 +14,4 @@ export {
   FRAME_WIDTH,
   FrameCaptureError,
 } from "@/features/capture/lib/encode-frame"
+export { VideoFrameClock } from "@/features/capture/lib/video-frame-clock"

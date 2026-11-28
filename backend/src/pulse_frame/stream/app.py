@@ -15,6 +15,13 @@ from pulse_frame.signal.errors import SignalError
 from pulse_frame.signal.live import LiveHrv
 from pulse_frame.signal.tracker import ReadingState
 from pulse_frame.stream.admission import FrameAdmission
+from pulse_frame.stream.beat_signal import (
+    BEAT_SIGNAL_CLOSE_FORMAT,
+    BEAT_SIGNAL_FORMAT,
+    FramePacer,
+    close_line_args,
+    second_line_args,
+)
 from pulse_frame.stream.errors import FrameRejectedError, WireCode, is_wire_code
 from pulse_frame.stream.frames import (
     capture_ms,
@@ -121,16 +128,24 @@ class StreamSession:
         processor: FrameProcessor,
         live: LiveHrv,
         clock: Clock,
+        diagnostics: bool = False,
     ) -> None:
         self._socket = websocket
         self._processor = processor
         self._live = live
         self._clock = clock
         self._admission = FrameAdmission()
+        self._pacer = FramePacer() if diagnostics else None
         self._last_reading_ms: int | None = None
         self._last_state: ReadingState | None = None
 
     async def run(self) -> None:
+        try:
+            await self._serve()
+        finally:
+            self._log_close()
+
+    async def _serve(self) -> None:
         while True:
             message = await self._socket.receive()
             if message["type"] == "websocket.disconnect":
@@ -169,12 +184,36 @@ class StreamSession:
                 reading_due,
             )
         except (VisionError, SignalError) as error:
-            self._admission.hand_over(timestamp_ms, arrival_s)
+            self._hand_over(timestamp_ms, arrival_s, None)
             code = wire_code(error)
             log.info("event=frame_failed code=%s sent=%s", error.code, code)
             return [error_message(code)]
-        self._admission.hand_over(timestamp_ms, arrival_s)
+        self._hand_over(timestamp_ms, arrival_s, processed.result)
         return self._replies(timestamp_ms, processed)
+
+    def _hand_over(
+        self, timestamp_ms: int, arrival_s: float, result: FrameResult | None
+    ) -> None:
+        self._admission.hand_over(timestamp_ms, arrival_s)
+        if self._pacer is not None:
+            self._note_pace(self._pacer, timestamp_ms, result)
+
+    def _note_pace(
+        self, pacer: FramePacer, timestamp_ms: int, result: FrameResult | None
+    ) -> None:
+        sampled = result is not None and result.colours is not None
+        moving = result is not None and result.moving
+        pace = pacer.add(timestamp_ms, sampled, moving)
+        if pace is None:
+            return
+        log.info(BEAT_SIGNAL_FORMAT, *second_line_args(pace, self._live, timestamp_ms))
+
+    def _log_close(self) -> None:
+        if self._pacer is None:
+            return
+        args = close_line_args(self._live)
+        if args is not None:
+            log.info(BEAT_SIGNAL_CLOSE_FORMAT, *args)
 
     def _reading_due(self, timestamp_ms: int) -> bool:
         last = self._last_reading_ms
@@ -221,6 +260,7 @@ async def serve_connection(
     factory: ProcessorFactory,
     hrv_factory: HrvFactory,
     clock: Clock,
+    diagnostics: bool = False,
 ) -> None:
     try:
         processor = await build_processor(factory)
@@ -230,7 +270,9 @@ async def serve_connection(
         return
     log.info("event=connection_opened")
     try:
-        await StreamSession(websocket, processor, hrv_factory(), clock).run()
+        await StreamSession(
+            websocket, processor, hrv_factory(), clock, diagnostics
+        ).run()
     except WebSocketDisconnect:
         log.info("event=client_gone")
     finally:
@@ -242,6 +284,7 @@ def create_app(
     processor_factory: ProcessorFactory | None = None,
     clock: Clock = time.monotonic,
     hrv_factory: HrvFactory = LiveHrv,
+    diagnostics: bool = False,
 ) -> FastAPI:
     factory = default_processor if processor_factory is None else processor_factory
     slot = ConnectionSlot()
@@ -265,7 +308,7 @@ def create_app(
             return
         try:
             await websocket.accept()
-            await serve_connection(websocket, factory, hrv_factory, clock)
+            await serve_connection(websocket, factory, hrv_factory, clock, diagnostics)
         finally:
             slot.release()
 

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { expectQuietRef, guidedPage, openGuidedRun, RUN_MS, startCheck, startRun } from '../../support/guided-page';
+import { frameSends, gapsBetween } from '../../support/frame-timing';
 import { MockBackend, STREAM_URL, WIRE_ERRORS } from '../../support/mock-backend';
 import { settleRendering, waitForMoreFrames } from '../../support/page-helpers';
 import { socketRecords } from '../../support/socket-recorder';
@@ -101,8 +102,15 @@ async function expectNoSecondConnection(page: Page, backend: MockBackend): Promi
   expect(backend.openConnections()).toEqual([]);
 }
 
-function gapsBetween(times: number[]): number[] {
-  return times.slice(1).map((time, index) => time - times[index]);
+async function sendTimesAsReceived(page: Page, backend: MockBackend): Promise<number[]> {
+  let sent: number[] = [];
+  await expect
+    .poll(async () => {
+      sent = (await frameSends(page)).map((send) => send.at);
+      return sent.length === backend.frames.length;
+    })
+    .toBe(true);
+  return sent;
 }
 
 async function expectOneConnectionOnly(page: Page, backend: MockBackend): Promise<void> {
@@ -125,7 +133,7 @@ test.describe('stream socket client', () => {
   });
 
   test('waits for the turn reply before sending the next frame', async ({ page }) => {
-    const backend = await MockBackend.attach(page);
+    const backend = await MockBackend.attach(page, 'browser');
     backend.setReplyDelay(250);
 
     await startCheck(page, backend);
@@ -135,16 +143,18 @@ test.describe('stream socket client', () => {
   });
 
   test('spaces frame sends at least 34 ms apart', async ({ page }) => {
-    const backend = await MockBackend.attach(page);
+    const backend = await MockBackend.attach(page, 'browser');
 
     await startCheck(page, backend);
     await waitForMoreFrames(backend, 25);
 
+    const sent = await sendTimesAsReceived(page, backend);
     const [streaming] = backend.openConnections();
     const frames = backend.framesOn(streaming.id);
-    const captureGaps = gapsBetween(frames.map((frame) => frame.captureMs));
+    expect(sent.length, 'frame sends seen by the page').toBeGreaterThanOrEqual(2);
+    expect(sent.length, 'frame sends against frames at the backend').toBe(frames.length);
     const arrivalGaps = gapsBetween(frames.map((frame) => frame.arrivedAt));
-    expect(Math.min(...captureGaps)).toBeGreaterThanOrEqual(34);
+    expect(Math.min(...gapsBetween(sent))).toBeGreaterThanOrEqual(34);
     expect(Math.min(...arrivalGaps)).toBeGreaterThanOrEqual(25);
   });
 
@@ -322,10 +332,13 @@ test.describe('stream socket client', () => {
     await waitForMoreFrames(backend, 3);
     const [streaming] = backend.openConnections();
 
-    const expectOneFrameInFlight = () => {
+    const expectOneFrameInFlight = async () => {
+      const sent = await sendTimesAsReceived(page, backend);
       const frames = backend.framesOn(streaming.id);
       expect(frames.flatMap((frame, index) => (frame.arrivedWhileAwaitingReply ? [index] : []))).toEqual([]);
-      expect(Math.min(...gapsBetween(frames.map((frame) => frame.captureMs)))).toBeGreaterThanOrEqual(34);
+      expect(sent.length, 'frame sends seen by the page').toBeGreaterThanOrEqual(2);
+      expect(sent.length, 'frame sends against frames at the backend').toBe(frames.length);
+      expect(Math.min(...gapsBetween(sent))).toBeGreaterThanOrEqual(34);
     };
 
     await test.step('a duplicate reply during the spacing wait', async () => {
@@ -335,7 +348,7 @@ test.describe('stream socket client', () => {
         await expect.poll(() => backend.sentDuplicates.length).toBe(sent + 1);
         await waitForMoreFrames(backend, 3);
       }
-      expectOneFrameInFlight();
+      await expectOneFrameInFlight();
     });
 
     await test.step('a duplicate reply after the next frame is sent', async () => {
@@ -346,7 +359,7 @@ test.describe('stream socket client', () => {
         await expect.poll(() => backend.sentDuplicates.length).toBe(sent + 1);
         await waitForMoreFrames(backend, 3);
       }
-      expectOneFrameInFlight();
+      await expectOneFrameInFlight();
     });
   });
 });

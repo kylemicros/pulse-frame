@@ -86,7 +86,45 @@ export type CameraView = 'plain' | 'busy';
 
 type ViewWindow = Window & { cameraView: { current: CameraView } };
 
+const CAMERA_CADENCE_MS = 33;
+
+export type CadenceWindow = Window & { cameraCadence: (stream: MediaStream, paint: () => void) => void };
+
+export async function installCameraCadence(page: Page): Promise<void> {
+  await page.addInitScript((frameMs) => {
+    if ('cameraCadence' in globalThis) {
+      return;
+    }
+    const onRealClock = String(globalThis.setInterval).includes('[native code]');
+    const every = globalThis.setInterval.bind(globalThis);
+    const stop = globalThis.clearInterval.bind(globalThis);
+    Object.defineProperty(globalThis, 'cameraCadence', {
+      value: (stream: MediaStream, paint: () => void) => {
+        if (!onRealClock) {
+          throw new Error('The test camera was set up after page.clock.install, so its frames would stop with the fake clock.');
+        }
+        const tracks = stream.getVideoTracks() as Array<MediaStreamTrack & { requestFrame?: () => void }>;
+        const present = () => {
+          paint();
+          for (const track of tracks) {
+            track.requestFrame?.();
+          }
+        };
+        present();
+        const timer = every(() => {
+          if (tracks.every((track) => track.readyState === 'ended')) {
+            stop(timer);
+            return;
+          }
+          present();
+        }, frameMs);
+      },
+    });
+  }, CAMERA_CADENCE_MS);
+}
+
 export async function useDrawnCamera(page: Page): Promise<void> {
+  await installCameraCadence(page);
   await page.addInitScript(() => {
     const view: { current: CameraView } = { current: 'plain' };
     Object.defineProperty(globalThis, 'cameraView', { value: view });
@@ -120,19 +158,17 @@ export async function useDrawnCamera(page: Page): Promise<void> {
       if (context === null) {
         throw new Error('The drawn camera got no 2D context');
       }
-      const draw = () => context.putImageData(paintings.get(view.current) ?? paint('plain'), 0, 0);
-      draw();
-      const timer = setInterval(draw, 100);
-      const stream = canvas.captureStream(30);
-      for (const track of stream.getTracks()) {
-        track.addEventListener('ended', () => clearInterval(timer));
-      }
+      const stream = canvas.captureStream(0);
+      (globalThis as unknown as CadenceWindow).cameraCadence(stream, () =>
+        context.putImageData(paintings.get(view.current) ?? paint('plain'), 0, 0),
+      );
       return stream;
     };
   });
 }
 
 export async function useWideCamera(page: Page, width = 1280, height = 720): Promise<void> {
+  await installCameraCadence(page);
   await page.addInitScript(
     ({ wide, tall }) => {
       navigator.mediaDevices.getUserMedia = async () => {
@@ -143,16 +179,11 @@ export async function useWideCamera(page: Page, width = 1280, height = 720): Pro
         if (context === null) {
           throw new Error('The wide camera got no 2D context');
         }
-        const draw = () => {
+        const stream = canvas.captureStream(0);
+        (globalThis as unknown as CadenceWindow).cameraCadence(stream, () => {
           context.fillStyle = 'rgb(128, 128, 128)';
           context.fillRect(0, 0, wide, tall);
-        };
-        draw();
-        const timer = setInterval(draw, 100);
-        const stream = canvas.captureStream(30);
-        for (const track of stream.getTracks()) {
-          track.addEventListener('ended', () => clearInterval(timer));
-        }
+        });
         return stream;
       };
     },

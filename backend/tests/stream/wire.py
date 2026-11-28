@@ -436,3 +436,14 @@ def byte_needles(message: bytes) -> list[str]:
             repr(chunk)[2:-1],
         ]
     return needles
+
+
+def outline_points(turns: list[Turn]) -> list[list[float]]:
+    return [
+        point
+        for turn in turns
+        if turn.reply["type"] == "frame"
+        for patch in turn.reply["patches"].values()
+        if patch["usable"]
+        for point in patch["outline"]
+    ]
